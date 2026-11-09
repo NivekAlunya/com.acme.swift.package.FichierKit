@@ -69,7 +69,7 @@ jobs:
           fi
 
           # Precondition 4: Fetch previous review history on this PR to prevent circular feedback
-          PREV_REVIEWS=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments \
+          PREV_REVIEWS=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '[.[] | select(.body | contains("<!-- antigravity-pr-reviewer -->")) | .body] | .[-2:] | join("\n\n---\n\n")' 2>/dev/null || echo "")
 
           if [ -n "$PREV_REVIEWS" ]; then
@@ -205,4 +205,4 @@ jobs:
           fi
 
           echo "Posting new PR review comment..."
-          gh pr comment $PR_NUMBER --body-file review.md
+          gh pr comment "$PR_NUMBER" --body-file review.md
