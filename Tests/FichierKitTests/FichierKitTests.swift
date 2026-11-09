@@ -377,4 +377,92 @@ struct FichierKitTests {
         #expect(engine.playbackState == .idle)
         #expect(engine.currentTime == 0)
     }
+
+    @Test("Verify Platform Document Support and GIF/PDF Helpers")
+    func testDocumentAndGifHelpers() {
+        #expect(SupportedMediaTypes.isGIF(extension: "gif"))
+        #expect(SupportedMediaTypes.isGIF(extension: "GIF"))
+        #expect(!SupportedMediaTypes.isGIF(extension: "png"))
+        #expect(SupportedMediaTypes.mimeType(for: "pdf") == "application/pdf")
+        #expect(SupportedMediaTypes.mimeType(for: ".pdf") == "application/pdf")
+
+        #if !os(tvOS)
+        #expect(SupportedMediaTypes.isDocument(extension: "pdf"))
+        #expect(SupportedMediaTypes.isPDF(extension: "PDF"))
+        #expect(SupportedMediaTypes.isSupported(extension: "pdf"))
+        #expect(MediaItemType.document != MediaItemType.image)
+        #else
+        #expect(!SupportedMediaTypes.isDocument(extension: "pdf"))
+        #expect(!SupportedMediaTypes.isPDF(extension: "pdf"))
+        #expect(!SupportedMediaTypes.isSupported(extension: "pdf"))
+        #endif
+    }
+
+    @Test("Verify PlayerPlaybackState Convenience Properties")
+    func testPlayerPlaybackStateConvenience() {
+        #expect(PlayerPlaybackState.playing.isPlaying)
+        #expect(!PlayerPlaybackState.paused.isPlaying)
+        #expect(!PlayerPlaybackState.idle.isPlaying)
+
+        #expect(PlayerPlaybackState.loading.isBuffering)
+        #expect(PlayerPlaybackState.buffering.isBuffering)
+        #expect(!PlayerPlaybackState.playing.isBuffering)
+        #expect(!PlayerPlaybackState.failed("err").isBuffering)
+    }
+
+    @Test("Verify SMBClientProtocol downloadFile and Cancellation")
+    func testSMBDownloadFile() async throws {
+        let payload = Data("Hello PDF Document Payload".utf8)
+        let client = MockSMBClient(mockFileData: ["Docs/manual.pdf": payload])
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fichierkit_dl_\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        try await client.downloadFile(share: "Docs", path: "manual.pdf", to: tempURL)
+        let downloaded = try Data(contentsOf: tempURL)
+        #expect(downloaded == payload)
+
+        await #expect(throws: CancellationError.self) {
+            try await client.downloadFile(share: "Docs", path: "manual.pdf", to: tempURL) { _, _ in
+                false
+            }
+        }
+    }
+
+    @Test("Verify PlayerEngine Volume Mute Rate and Tolerance Seek Controls")
+    @MainActor
+    func testPlayerEngineExtendedControls() async {
+        let avEngine = AVPlayerEngine()
+        avEngine.volume = 0.45
+        #expect(abs(avEngine.volume - 0.45) < 0.02)
+        avEngine.isMuted = true
+        #expect(avEngine.isMuted)
+        avEngine.playbackRate = 1.5
+        #expect(avEngine.playbackRate == 1.5)
+        avEngine.seek(to: 12.0, toleranceBefore: 0, toleranceAfter: 0, completion: nil)
+        #expect(avEngine.currentTime == 12.0)
+        avEngine.tearDown()
+
+        let vlcEngine = TVVLCPlayerEngine()
+        vlcEngine.volume = 0.75
+        #expect(abs(vlcEngine.volume - 0.75) < 0.02)
+        vlcEngine.isMuted = true
+        #expect(vlcEngine.isMuted)
+        vlcEngine.playbackRate = 2.0
+        #expect(vlcEngine.playbackRate == 2.0)
+        vlcEngine.seek(to: 25.0, toleranceBefore: .infinity, toleranceAfter: .infinity, completion: nil)
+        #expect(vlcEngine.currentTime == 25.0)
+        vlcEngine.tearDown()
+
+        let delegate = SMBAVAssetResourceLoaderDelegate(
+            client: MockSMBClient(),
+            share: "Media",
+            path: "clip.mp4",
+            fileName: "clip.mp4",
+            fileSize: 1024
+        )
+        let streamURL = SMBAVAssetResourceLoaderDelegate.makeStreamURL(fileName: "clip.mp4")
+        #expect(streamURL.scheme == SMBAVAssetResourceLoaderDelegate.scheme)
+        delegate.cancelAll()
+    }
 }

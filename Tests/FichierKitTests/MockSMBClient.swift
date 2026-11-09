@@ -56,4 +56,22 @@ final class MockSMBClient: SMBClientProtocol, Sendable {
         let key = "\(share)/\(path)"
         return Int64(mockFileData[key]?.count ?? 0)
     }
+
+    func downloadFile(
+        share: String,
+        path: String,
+        to localURL: URL,
+        progress: (@Sendable (Int64, Int64) -> Bool)?
+    ) async throws {
+        try Task.checkCancellation()
+        let key = "\(share)/\(path)"
+        guard let data = mockFileData[key] else {
+            throw SMBError.shareNotFound(key)
+        }
+        let total = Int64(data.count)
+        if let progress, !progress(total, total) {
+            throw CancellationError()
+        }
+        try data.write(to: localURL, options: .atomic)
+    }
 }
