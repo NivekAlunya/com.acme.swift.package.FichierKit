@@ -1,0 +1,183 @@
+name: Antigravity PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: antigravity-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Target Base Branch
+        run: |
+          git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}
+
+      - name: Generate PR Diff & Review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.ANTIGRAVITY_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash' }}
+          PR_BASE: "origin/${{ github.base_ref }}"
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Precondition 1: Verify API Key presence
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::warning ::Neither GEMINI_API_KEY nor ANTIGRAVITY_API_KEY secret is configured in this repository."
+            echo "To enable automated PR reviews, add GEMINI_API_KEY (or ANTIGRAVITY_API_KEY) under Repository Settings -> Secrets and variables -> Actions."
+            exit 0
+          fi
+
+          # Precondition 2: Compute git diff against target branch
+          git diff "$PR_BASE...HEAD" > pr_diff.patch
+
+          if [ ! -s pr_diff.patch ]; then
+            echo "<!-- antigravity-pr-reviewer -->" > review.md
+            echo "### 🤖 Antigravity PR Review" >> review.md
+            echo "No code changes detected in this pull request." >> review.md
+            exit 0
+          fi
+
+          # Precondition 3: Guard against massive diffs (truncate to 1500 lines)
+          DIFF_LINES=$(wc -l < pr_diff.patch)
+          if [ "$DIFF_LINES" -gt 1500 ]; then
+            head -n 1500 pr_diff.patch > prompt_diff.patch
+            echo -e "\n\n... [Diff truncated: exceeded 1500 lines] ..." >> prompt_diff.patch
+          else
+            cp pr_diff.patch prompt_diff.patch
+          fi
+
+          # Precondition 4: Fetch previous review history on this PR to prevent circular feedback
+          PREV_REVIEWS=$(gh api repos/${{ github.repository }}/issues/$PR_NUMBER/comments \
+            --jq '[.[] | select(.body | contains("<!-- antigravity-pr-reviewer -->")) | .body] | .[-2:] | join("\n\n---\n\n")' 2>/dev/null || echo "")
+
+          if [ -n "$PREV_REVIEWS" ]; then
+            cat << 'EOF' > history_prompt.txt
+
+          ### 📜 Previous Review History (Your Earlier Feedback on This PR):
+          The author is addressing earlier review rounds. Below is the feedback you previously provided:
+          """
+          EOF
+            echo "$PREV_REVIEWS" >> history_prompt.txt
+            cat << 'EOF' >> history_prompt.txt
+          """
+
+          ⚠️ STRICT REVIEW CONTINUITY RULES:
+          1. Do NOT contradict or reverse your own previous recommendations or proposed code patterns.
+          2. If the author implemented a suggestion you requested in an earlier review, do NOT raise a new error or critique against your own proposed solution. Avoid circular feedback.
+          3. Acknowledge resolved points as fixed. Only raise genuinely new, critical issues or regressions introduced in the latest changes.
+          EOF
+          else
+            touch history_prompt.txt
+          fi
+
+          # Assemble review prompt
+          cat << 'EOF' > system_prompt.txt
+          You are a Senior DevOps & Principal Software Engineer reviewing a GitHub PR.
+          Focus strictly and exclusively on the updated parts of the code (the lines added, modified, or directly affected in this pull request diff). Do NOT review, flag issues in, or comment on untouched pre-existing code or surrounding context lines.
+          
+          Maintain strict review continuity: do NOT contradict your previous feedback or raise issues against code written specifically to address your prior suggestions.
+
+          Provide a concise, high-signal code review covering:
+          1. 🛡️ Security: Hardcoded secrets, credential leaks, injection risks in the changed code.
+          2. ⚠️ Logic & Reliability: Error handling, edge cases, breaking changes introduced by the diff.
+          3. ⚡ Performance & Scalability: Inefficient loops, resource leaks in the modifications.
+          4. 🧪 Testing & CI/CD: Missing tests or pipeline impacts related to the updates.
+
+          Format clearly in markdown with code suggestions where applicable.
+          EOF
+
+          cat << EOF > full_prompt.txt
+          $(cat system_prompt.txt)
+
+          Pull Request: "${PR_TITLE}" (#${PR_NUMBER})
+
+          IMPORTANT: Focus your review strictly and exclusively on the updated parts of the code below. Do not comment on untouched or pre-existing code.
+          $(cat history_prompt.txt)
+
+          Git Diff:
+          \`\`\`diff
+          $(cat prompt_diff.patch)
+          \`\`\`
+          EOF
+
+          # Create JSON payload cleanly with jq
+          jq -n --rawfile text full_prompt.txt '
+            {
+              contents: [{ parts: [{ text: $text }] }],
+              generationConfig: { temperature: 0.2 }
+            }
+          ' > request.json
+
+          # Call Gemini API with progressive delay (attempt * 15s) for 429 and 503
+          MAX_RETRIES=5
+          SUCCESS=false
+
+          # Initial jitter (0-5s) to avoid burst collision when multiple packages trigger concurrently
+          sleep $((RANDOM % 6))
+
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            echo "Calling Gemini API with model '${GEMINI_MODEL}' (attempt $attempt of $MAX_RETRIES)..."
+            HTTP_STATUS=$(curl -s --connect-timeout 15 --max-time 60 -o response.json -w "%{http_code}" \
+              -H "Content-Type: application/json" \
+              "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}" \
+              -d @request.json)
+
+            if [ "$HTTP_STATUS" -eq 200 ]; then
+              SUCCESS=true
+              break
+            elif [ "$HTTP_STATUS" -eq 429 ] || [ "$HTTP_STATUS" -eq 500 ] || [ "$HTTP_STATUS" -eq 502 ] || [ "$HTTP_STATUS" -eq 503 ] || [ "$HTTP_STATUS" -eq 504 ] || [ "$HTTP_STATUS" -eq 000 ]; then
+              if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+                RETRY_DELAY=$((attempt * 15))
+                echo "⚠️ Transient HTTP status '$HTTP_STATUS' received. Retrying in ${RETRY_DELAY}s (attempt $attempt of $MAX_RETRIES)..."
+                sleep $RETRY_DELAY
+              fi
+            else
+              echo "❌ API request failed with unrecoverable HTTP $HTTP_STATUS:"
+              cat response.json
+              exit 1
+            fi
+          done
+
+          if [ "$SUCCESS" != "true" ]; then
+            echo "❌ Gemini API request failed after $MAX_RETRIES attempts (last HTTP status: $HTTP_STATUS):"
+            cat response.json
+            exit 1
+          fi
+
+          # Extract response and build markdown review
+          echo "<!-- antigravity-pr-reviewer -->" > review.md
+          echo "### 🤖 Antigravity Automated Code Review" >> review.md
+          echo "" >> review.md
+          jq -r '.candidates[0].content.parts[0].text // "Review completed with no findings."' response.json >> review.md
+          echo "" >> review.md
+          echo "---" >> review.md
+          echo "*Reviewed by Antigravity Agent using \`${GEMINI_MODEL}\` on commit \`${GITHUB_SHA:0:7}\`*" >> review.md
+
+      - name: Post PR Review Comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Guard: skip comment posting if review.md was not generated (e.g. missing API key)
+          if [ ! -f review.md ]; then
+            echo "No review.md file found. Skipping comment posting."
+            exit 0
+          fi
+
+          echo "Posting new PR review comment..."
+          gh pr comment $PR_NUMBER --body-file review.md
