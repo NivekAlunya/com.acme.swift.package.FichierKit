@@ -13,6 +13,7 @@ public actor AMSMB2Client: SMBClientProtocol {
     private let password: String
     private var manager: SMB2Manager?
     private var connectedShare: String?
+    private var directorySnapshot: AMSMB2DirectorySnapshot?
     private let operationLimiter = SMBVideoThumbnailLimiter(maxConcurrent: 1)
 
     public init(server: SavedSMBConnection, password: String) {
@@ -31,6 +32,32 @@ public actor AMSMB2Client: SMBClientProtocol {
     public func listDirectory(share: String, path: String) async throws -> [MediaSourceItem] {
         try await operationLimiter.withPermit {
             try await self.performListDirectory(share: share, path: path)
+        }
+    }
+
+    /// Lists a bounded page of child folders and supported media files within the specified share and relative path.
+    ///
+    /// Because `AMSMB2.SMB2Manager.contentsOfDirectory(atPath:)` returns all directory entries in one snapshot and
+    /// SMB2 lacks server-side sorting, the initial un-cursored fetch retrieves and classifies entries once,
+    /// immediately drops raw filesystem dictionaries and unsupported extensions, caches one sorted directory index
+    /// for subsequent cursored reads, and frees the index once exhausted, replaced, or disconnected.
+    public func listDirectoryPage(
+        share: String,
+        path: String,
+        cursor: String?,
+        pageSize: Int,
+        sortBy sortKey: MediaSortKey,
+        order sortOrder: MediaSortOrder
+    ) async throws -> SMBDirectoryPage {
+        try await operationLimiter.withPermit {
+            try await self.performListDirectoryPage(
+                share: share,
+                path: path,
+                cursor: cursor,
+                pageSize: pageSize,
+                sortBy: sortKey,
+                order: sortOrder
+            )
         }
     }
 
@@ -68,11 +95,15 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
     }
 
-    /// Disconnects the underlying SMB session cleanly.
+    /// Disconnects the underlying SMB session cleanly and clears any cached directory index.
+    ///
+    /// Safe to call from a cancelled task; permit acquisition and disconnect complete idempotently.
     public func disconnect() async {
-        try? await operationLimiter.withPermit {
-            await self.performDisconnect()
-        }
+        await Task {
+            try? await self.operationLimiter.withPermit {
+                await self.performDisconnect()
+            }
+        }.value
     }
 
     // MARK: - Serialized SMB Implementations
@@ -94,6 +125,80 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private func performListDirectory(share: String, path: String) async throws -> [MediaSourceItem] {
+        try await fetchAndMapDirectoryEntries(share: share, normalizedPath: Self.normalizeRelativePath(path))
+    }
+
+    private func performListDirectoryPage(
+        share: String,
+        path: String,
+        cursor: String?,
+        pageSize: Int,
+        sortBy sortKey: MediaSortKey,
+        order sortOrder: MediaSortOrder
+    ) async throws -> SMBDirectoryPage {
+        try Task.checkCancellation()
+        guard pageSize > 0 else {
+            return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: nil)
+        }
+
+        let normalizedPath = Self.normalizeRelativePath(path)
+        let offset: Int
+        if let cursor {
+            guard let parsedOffset = Int(cursor), parsedOffset >= 0 else {
+                return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: nil)
+            }
+            offset = parsedOffset
+        } else {
+            offset = 0
+            directorySnapshot = nil
+        }
+
+        let sortedItems: [MediaSourceItem]
+        if let snapshot = directorySnapshot,
+           cursor != nil,
+           snapshot.share == share,
+           snapshot.normalizedPath == normalizedPath,
+           snapshot.sortKey == sortKey,
+           snapshot.sortOrder == sortOrder {
+            sortedItems = snapshot.items
+        } else {
+            directorySnapshot = nil
+            let mapped = try await fetchAndMapDirectoryEntries(share: share, normalizedPath: normalizedPath)
+            try Task.checkCancellation()
+            sortedItems = MediaSourceItemSortComparator.sortFoldersFirst(
+                mapped,
+                sortBy: sortKey,
+                order: sortOrder
+            )
+        }
+
+        guard offset < sortedItems.count else {
+            directorySnapshot = nil
+            return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: sortedItems.count)
+        }
+
+        let endIndex = min(offset + pageSize, sortedItems.count)
+        let hasMore = endIndex < sortedItems.count
+        if hasMore {
+            directorySnapshot = AMSMB2DirectorySnapshot(
+                share: share,
+                normalizedPath: normalizedPath,
+                sortKey: sortKey,
+                sortOrder: sortOrder,
+                items: sortedItems
+            )
+        } else {
+            directorySnapshot = nil
+        }
+
+        return SMBDirectoryPage(
+            items: Array(sortedItems[offset..<endIndex]),
+            nextCursor: hasMore ? String(endIndex) : nil,
+            totalCount: sortedItems.count
+        )
+    }
+
+    private func fetchAndMapDirectoryEntries(share: String, normalizedPath: String) async throws -> [MediaSourceItem] {
         let maxAttempts = 2
         var lastError: Error?
 
@@ -103,7 +208,6 @@ public actor AMSMB2Client: SMBClientProtocol {
                 let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
                 try Task.checkCancellation()
 
-                let normalizedPath = Self.normalizeRelativePath(path)
                 let entries = try await mgr.contentsOfDirectory(atPath: normalizedPath)
                 try Task.checkCancellation()
 
@@ -177,6 +281,7 @@ public actor AMSMB2Client: SMBClientProtocol {
             } catch {
                 if Task.isCancelled { throw CancellationError() }
                 connectedShare = nil
+                directorySnapshot = nil
                 lastError = error
                 if attempt < maxAttempts {
                     try? await Task.sleep(nanoseconds: 250_000_000)
@@ -316,6 +421,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         try? await manager?.disconnectShare()
         manager = nil
         connectedShare = nil
+        directorySnapshot = nil
     }
 
     // MARK: - Private Helpers

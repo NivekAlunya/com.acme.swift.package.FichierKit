@@ -71,13 +71,12 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         }
     }
 
-    public var playbackRate: Float = 1.0 {
-        didSet {
-            let clamped = max(0.25, min(4.0, playbackRate))
-            if playbackRate != clamped {
-                playbackRate = clamped
-                return
-            }
+    public var playbackRate: Float {
+        get { playbackRateInternal }
+        set {
+            guard newValue.isFinite else { return }
+            let clamped = max(0.25, min(4.0, newValue))
+            playbackRateInternal = clamped
             #if canImport(VLCKit)
             mediaPlayer.rate = clamped
             #endif
@@ -110,6 +109,7 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
 
     private var volumeInternal: Double = 1.0
     private var isMutedInternal: Bool = false
+    private var playbackRateInternal: Float = 1.0
     private var pendingSeekSeconds: Double?
     private var lastKnownAudioTrackCount: Int = -1
     private var lastKnownSubtitleTrackCount: Int = -1

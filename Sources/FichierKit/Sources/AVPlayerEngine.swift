@@ -57,13 +57,12 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
         set { avPlayer.isMuted = newValue }
     }
 
-    public var playbackRate: Float = 1.0 {
-        didSet {
-            let clamped = max(0.25, min(4.0, playbackRate))
-            if playbackRate != clamped {
-                playbackRate = clamped
-                return
-            }
+    public var playbackRate: Float {
+        get { playbackRateInternal }
+        set {
+            guard newValue.isFinite else { return }
+            let clamped = max(0.25, min(4.0, newValue))
+            playbackRateInternal = clamped
             avPlayer.defaultRate = clamped
             if isPlaying {
                 avPlayer.rate = clamped
@@ -79,6 +78,7 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
     public var onTracksChanged: (@MainActor @Sendable () -> Void)?
     public var onChaptersChanged: (@MainActor @Sendable () -> Void)?
 
+    private var playbackRateInternal: Float = 1.0
     private var timeObserverToken: Any?
     private var itemStatusObserver: NSKeyValueObservation?
     private var timeControlObserver: NSKeyValueObservation?
