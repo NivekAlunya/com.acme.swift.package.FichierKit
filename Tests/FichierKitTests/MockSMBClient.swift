@@ -74,4 +74,6 @@ final class MockSMBClient: SMBClientProtocol, Sendable {
         }
         try data.write(to: localURL, options: .atomic)
     }
+
+    func disconnect() async {}
 }
