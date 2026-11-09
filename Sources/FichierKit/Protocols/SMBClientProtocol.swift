@@ -22,4 +22,36 @@ public protocol SMBClientProtocol: Sendable {
 
     /// Queries the byte length of a file on the remote share.
     func fileSize(share: String, path: String) async throws -> Int64
+
+    /// Streams a remote file directly to a local file URL with optional progress reporting and cancellation.
+    func downloadFile(
+        share: String,
+        path: String,
+        to localURL: URL,
+        progress: (@Sendable (Int64, Int64) -> Bool)?
+    ) async throws
+}
+
+public extension SMBClientProtocol {
+    /// Streams a remote file directly to a local file URL without a progress callback.
+    func downloadFile(share: String, path: String, to localURL: URL) async throws {
+        try await downloadFile(share: share, path: path, to: localURL, progress: nil)
+    }
+
+    /// Default buffered fallback when an `SMBClientProtocol` implementation does not override direct streaming download.
+    func downloadFile(
+        share: String,
+        path: String,
+        to localURL: URL,
+        progress: (@Sendable (Int64, Int64) -> Bool)?
+    ) async throws {
+        try Task.checkCancellation()
+        let total = try await fileSize(share: share, path: path)
+        let data = try await readFileData(share: share, path: path, maxBytes: nil)
+        try Task.checkCancellation()
+        if let progress, !progress(Int64(data.count), max(total, Int64(data.count))) {
+            throw CancellationError()
+        }
+        try data.write(to: localURL, options: .atomic)
+    }
 }

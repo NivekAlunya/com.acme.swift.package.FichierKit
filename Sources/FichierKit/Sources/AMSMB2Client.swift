@@ -56,6 +56,18 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
     }
 
+    /// Streams a remote SMB file directly to a local file URL.
+    public func downloadFile(
+        share: String,
+        path: String,
+        to localURL: URL,
+        progress: (@Sendable (Int64, Int64) -> Bool)?
+    ) async throws {
+        try await operationLimiter.withPermit {
+            try await self.performDownloadFile(share: share, path: path, to: localURL, progress: progress)
+        }
+    }
+
     /// Disconnects the underlying SMB session cleanly.
     public func disconnect() async {
         try? await operationLimiter.withPermit {
@@ -132,7 +144,16 @@ public actor AMSMB2Client: SMBClientProtocol {
                         guard SupportedMediaTypes.isSupported(extension: ext) else {
                             continue
                         }
-                        let itemType: MediaItemType = SupportedMediaTypes.isVideo(extension: ext) ? .video : .image
+                        let itemType: MediaItemType
+                        if SupportedMediaTypes.isVideo(extension: ext) {
+                            itemType = .video
+                        } else {
+                            #if !os(tvOS)
+                            itemType = SupportedMediaTypes.isDocument(extension: ext) ? .document : .image
+                            #else
+                            itemType = .image
+                            #endif
+                        }
                         let size = Self.extractFileSize(from: entry)
                         results.append(
                             MediaSourceItem(
@@ -246,6 +267,49 @@ public actor AMSMB2Client: SMBClientProtocol {
             connectedShare = nil
             throw mapError(error, share: share)
         }
+    }
+
+    private func performDownloadFile(
+        share: String,
+        path: String,
+        to localURL: URL,
+        progress: (@Sendable (Int64, Int64) -> Bool)?
+    ) async throws {
+        let maxAttempts = 2
+        var lastError: Error?
+        let normalizedPath = Self.normalizeRelativePath(path)
+
+        for attempt in 1...maxAttempts {
+            try Task.checkCancellation()
+            try? FileManager.default.removeItem(at: localURL)
+            do {
+                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
+                try Task.checkCancellation()
+
+                try await mgr.downloadItem(atPath: normalizedPath, to: localURL) { bytes, total in
+                    if Task.isCancelled { return false }
+                    return progress?(bytes, total) ?? true
+                }
+                if Task.isCancelled {
+                    try? FileManager.default.removeItem(at: localURL)
+                    throw CancellationError()
+                }
+                return
+            } catch is CancellationError {
+                try? FileManager.default.removeItem(at: localURL)
+                throw CancellationError()
+            } catch {
+                try? FileManager.default.removeItem(at: localURL)
+                if Task.isCancelled { throw CancellationError() }
+                connectedShare = nil
+                lastError = error
+                if attempt < maxAttempts {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+            }
+        }
+
+        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performDisconnect() async {

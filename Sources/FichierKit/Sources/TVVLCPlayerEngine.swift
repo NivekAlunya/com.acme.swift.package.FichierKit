@@ -51,6 +51,39 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         #endif
     }
 
+    public var volume: Double {
+        get { volumeInternal }
+        set {
+            volumeInternal = max(0.0, min(1.0, newValue))
+            #if canImport(VLCKit)
+            mediaPlayer.audio?.volume = Int32(volumeInternal * 100.0)
+            #endif
+        }
+    }
+
+    public var isMuted: Bool {
+        get { isMutedInternal }
+        set {
+            isMutedInternal = newValue
+            #if canImport(VLCKit)
+            mediaPlayer.audio?.isMuted = newValue
+            #endif
+        }
+    }
+
+    public var playbackRate: Float = 1.0 {
+        didSet {
+            let clamped = max(0.25, min(4.0, playbackRate))
+            if playbackRate != clamped {
+                playbackRate = clamped
+                return
+            }
+            #if canImport(VLCKit)
+            mediaPlayer.rate = clamped
+            #endif
+        }
+    }
+
     public var onPlaybackEnded: (@MainActor @Sendable () -> Void)?
     public var onError: (@MainActor @Sendable (Error) -> Void)?
     public var onStateUpdate: (@MainActor @Sendable (PlayerPlaybackState) -> Void)?
@@ -75,6 +108,8 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
     private var subtitleTrackByID: [String: VLCMediaPlayer.Track] = [:]
     #endif
 
+    private var volumeInternal: Double = 1.0
+    private var isMutedInternal: Bool = false
     private var pendingSeekSeconds: Double?
     private var lastKnownAudioTrackCount: Int = -1
     private var lastKnownSubtitleTrackCount: Int = -1
@@ -159,6 +194,11 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         #if canImport(VLCKit)
         isExplicitStop = false
         mediaPlayer.play()
+        if playbackRate != 1.0 {
+            mediaPlayer.rate = playbackRate
+        }
+        mediaPlayer.audio?.volume = Int32(volumeInternal * 100.0)
+        mediaPlayer.audio?.isMuted = isMutedInternal
         if playbackState == .paused || playbackState == .idle {
             playbackState = .playing
         }
@@ -198,6 +238,28 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
             pendingSeekSeconds = clamped
         }
         #endif
+    }
+
+    public func seek(
+        to seconds: Double,
+        toleranceBefore: Double,
+        toleranceAfter: Double,
+        completion: (@MainActor @Sendable (Bool) -> Void)?
+    ) {
+        let precision: PlayerSeekPrecision
+        if toleranceBefore == 0 && toleranceAfter == 0 {
+            precision = .exact
+        } else if toleranceBefore.isInfinite || toleranceAfter.isInfinite || toleranceBefore >= 5.0 || toleranceAfter >= 5.0 {
+            precision = .fast
+        } else {
+            precision = .automatic
+        }
+        seek(to: seconds, precision: precision)
+        if let completion {
+            Task { @MainActor in
+                completion(true)
+            }
+        }
     }
 
     public func next() {}
@@ -480,6 +542,18 @@ extension TVVLCPlayerEngine: VLCMediaPlayerDelegate {
                 self.didStartPlayback = true
                 self.didEmitPlaybackEnded = false
                 self.playbackState = .playing
+                if self.playbackRate != 1.0 {
+                    self.mediaPlayer.rate = self.playbackRate
+                }
+                if let audio = self.mediaPlayer.audio {
+                    let targetVol = Int32(self.volumeInternal * 100.0)
+                    if audio.volume != targetVol {
+                        audio.volume = targetVol
+                    }
+                    if audio.isMuted != self.isMutedInternal {
+                        audio.isMuted = self.isMutedInternal
+                    }
+                }
                 if let media = self.mediaPlayer.media {
                     let lenSeconds = Double(media.length.intValue) / 1000.0
                     if lenSeconds.isFinite && !lenSeconds.isNaN && lenSeconds > 0 {

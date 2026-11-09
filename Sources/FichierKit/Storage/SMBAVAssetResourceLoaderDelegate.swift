@@ -10,8 +10,8 @@ import UniformTypeIdentifiers
 
 /// `AVAssetResourceLoaderDelegate` streaming native video byte ranges on demand from an `SMBClientProtocol`
 /// over the custom `smbstream://` URL scheme without local HTTP loopback sockets or disk buffering.
-nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelegate, Sendable {
-    static let scheme = "smbstream"
+public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelegate, Sendable {
+    public static let scheme = "smbstream"
 
     private let client: any SMBClientProtocol
     private let share: String
@@ -21,7 +21,7 @@ nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAssetResou
     private let chunkSize: Int
     private let taskTracker = SMBResourceLoadingTaskTracker()
 
-    init(
+    public init(
         client: any SMBClientProtocol,
         share: String,
         path: String,
@@ -38,13 +38,13 @@ nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAssetResou
         super.init()
     }
 
-    static func makeStreamURL(fileName: String) -> URL {
+    public static func makeStreamURL(fileName: String) -> URL {
         let ext = (fileName as NSString).pathExtension
         let safeExt = ext.isEmpty ? "mp4" : ext
         return URL(string: "\(scheme)://stream/\(UUID().uuidString).\(safeExt)") ?? URL(fileURLWithPath: "/")
     }
 
-    func resourceLoader(
+    public func resourceLoader(
         _ resourceLoader: AVAssetResourceLoader,
         shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest
     ) -> Bool {
@@ -162,7 +162,7 @@ nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAssetResou
         return true
     }
 
-    func resourceLoader(
+    public func resourceLoader(
         _ resourceLoader: AVAssetResourceLoader,
         didCancel loadingRequest: AVAssetResourceLoadingRequest
     ) {
@@ -172,7 +172,7 @@ nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAssetResou
         }
     }
 
-    nonisolated func cancelAll() {
+    public nonisolated func cancelAll() {
         Task { [taskTracker] in
             await taskTracker.cancelAll()
         }
