@@ -23,6 +23,15 @@ public protocol PlayerEngine: AnyObject, Sendable {
     /// Total duration in seconds (0 if unknown or live).
     var duration: Double { get }
 
+    /// Normalized audio output volume in `0.0...1.0`.
+    var volume: Double { get set }
+
+    /// Indicates whether audio output is currently muted.
+    var isMuted: Bool { get set }
+
+    /// Active playback speed multiplier (default `1.0`).
+    var playbackRate: Float { get set }
+
     /// Available audio tracks discovered for the loaded video.
     var availableAudioTracks: [PlayerAudioTrack] { get }
 
@@ -52,6 +61,14 @@ public protocol PlayerEngine: AnyObject, Sendable {
 
     /// Seeks to a specific timestamp in seconds with explicit decoder keyframe precision.
     func seek(to seconds: Double, precision: PlayerSeekPrecision)
+
+    /// Seeks to a specific timestamp in seconds with explicit tolerance bounds and completion handler.
+    func seek(
+        to seconds: Double,
+        toleranceBefore: Double,
+        toleranceAfter: Double,
+        completion: (@MainActor @Sendable (Bool) -> Void)?
+    )
 
     /// Advances to the next video item in the playlist.
     func next()

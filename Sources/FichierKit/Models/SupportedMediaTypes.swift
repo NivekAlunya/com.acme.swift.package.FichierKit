@@ -33,10 +33,19 @@ public enum SupportedMediaTypes: Sendable {
     /// Unified union set of all recognized video file extensions.
     public static let videoExtensions: Set<String> = nativeVideoExtensions.union(extendedVideoExtensions)
 
-    /// Unified union set of all supported media file extensions in tvOS media browsing.
-    public static let allExtensions: Set<String> = imageExtensions.union(videoExtensions)
+    /// Document file extensions supported on non-tvOS platforms (PDFKit).
+    public static let documentExtensions: Set<String> = {
+        #if os(tvOS)
+        return []
+        #else
+        return ["pdf"]
+        #endif
+    }()
 
-    /// Returns `true` if the extension represents a supported image or video file.
+    /// Unified union set of all supported media file extensions.
+    public static let allExtensions: Set<String> = imageExtensions.union(videoExtensions).union(documentExtensions)
+
+    /// Returns `true` if the extension represents a supported image, video, or document file.
     public static func isSupported(extension ext: String) -> Bool {
         allExtensions.contains(ext.lowercased())
     }
@@ -59,6 +68,25 @@ public enum SupportedMediaTypes: Sendable {
     /// Returns `true` if the extension represents an image format.
     public static func isImage(extension ext: String) -> Bool {
         imageExtensions.contains(ext.lowercased())
+    }
+
+    /// Returns `true` if the extension represents a document format (PDF).
+    public static func isDocument(extension ext: String) -> Bool {
+        documentExtensions.contains(ext.lowercased())
+    }
+
+    /// Returns `true` if the extension represents a PDF document on supported platforms.
+    public static func isPDF(extension ext: String) -> Bool {
+        #if os(tvOS)
+        return false
+        #else
+        return ext.lowercased() == "pdf"
+        #endif
+    }
+
+    /// Returns `true` if the extension represents a GIF image.
+    public static func isGIF(extension ext: String) -> Bool {
+        ext.lowercased() == "gif"
     }
 
     /// Resolves the MIME content-type string for a given file extension.
@@ -93,6 +121,8 @@ public enum SupportedMediaTypes: Sendable {
             return "application/vnd.rn-realmedia"
         case "mxf":
             return "application/mxf"
+        case "pdf":
+            return "application/pdf"
         default:
             if let utType = UTType(filenameExtension: normalized), let mime = utType.preferredMIMEType {
                 return mime

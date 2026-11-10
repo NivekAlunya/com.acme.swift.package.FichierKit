@@ -47,6 +47,29 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
         avPlayer.timeControlStatus == .playing || (avPlayer.rate > 0 && avPlayer.error == nil)
     }
 
+    public var volume: Double {
+        get { Double(avPlayer.volume) }
+        set { avPlayer.volume = Float(max(0.0, min(1.0, newValue))) }
+    }
+
+    public var isMuted: Bool {
+        get { avPlayer.isMuted }
+        set { avPlayer.isMuted = newValue }
+    }
+
+    public var playbackRate: Float {
+        get { playbackRateInternal }
+        set {
+            guard newValue.isFinite else { return }
+            let clamped = max(0.25, min(4.0, newValue))
+            playbackRateInternal = clamped
+            avPlayer.defaultRate = clamped
+            if isPlaying {
+                avPlayer.rate = clamped
+            }
+        }
+    }
+
     public var onPlaybackEnded: (@MainActor @Sendable () -> Void)?
     public var onError: (@MainActor @Sendable (Error) -> Void)?
     public var onStateUpdate: (@MainActor @Sendable (PlayerPlaybackState) -> Void)?
@@ -55,6 +78,7 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
     public var onTracksChanged: (@MainActor @Sendable () -> Void)?
     public var onChaptersChanged: (@MainActor @Sendable () -> Void)?
 
+    private var playbackRateInternal: Float = 1.0
     private var timeObserverToken: Any?
     private var itemStatusObserver: NSKeyValueObservation?
     private var timeControlObserver: NSKeyValueObservation?
@@ -70,6 +94,13 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
 
     /// Loads a media URL for playback.
     public func load(url: URL) {
+        let playerItem = AVPlayerItem(url: url)
+        load(playerItem: playerItem)
+    }
+
+    /// Loads a preconfigured `AVPlayerItem` (such as an `AVURLAsset` with a custom resource loader) for playback.
+    public func load(playerItem: AVPlayerItem) {
+        ensureObservers()
         tearDownCurrentItem()
         currentTime = 0
         duration = 0
@@ -81,14 +112,18 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
         onTracksChanged?()
         onChaptersChanged?()
 
-        let playerItem = AVPlayerItem(url: url)
         observePlayerItem(playerItem)
         avPlayer.replaceCurrentItem(with: playerItem)
         playbackState = .loading
     }
 
     public func play() {
-        avPlayer.play()
+        avPlayer.defaultRate = playbackRate
+        if playbackRate != 1.0 {
+            avPlayer.rate = playbackRate
+        } else {
+            avPlayer.play()
+        }
         playbackState = .playing
     }
 
@@ -120,6 +155,25 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
         )
         avPlayer.currentItem?.cancelPendingSeeks()
         avPlayer.seek(to: targetTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
+    }
+
+    public func seek(
+        to seconds: Double,
+        toleranceBefore: Double,
+        toleranceAfter: Double,
+        completion: (@MainActor @Sendable (Bool) -> Void)?
+    ) {
+        let clamped = max(0, min(seconds, duration > 0 ? duration : seconds))
+        currentTime = clamped
+        let targetTime = CMTime(seconds: clamped, preferredTimescale: 600)
+        let tolBefore = Self.makeToleranceTime(from: toleranceBefore)
+        let tolAfter = Self.makeToleranceTime(from: toleranceAfter)
+        avPlayer.currentItem?.cancelPendingSeeks()
+        avPlayer.seek(to: targetTime, toleranceBefore: tolBefore, toleranceAfter: tolAfter) { finished in
+            Task { @MainActor in
+                completion?(finished)
+            }
+        }
     }
 
     public func next() {}
@@ -168,33 +222,41 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
 
     // MARK: - Private Observers
 
+    private func ensureObservers() {
+        setupObservers()
+    }
+
     private func setupObservers() {
-        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
-        timeObserverToken = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let sec = time.seconds
-                if sec.isFinite && !sec.isNaN {
-                    self.currentTime = max(0, sec)
+        if timeObserverToken == nil {
+            let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+            timeObserverToken = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let sec = time.seconds
+                    if sec.isFinite && !sec.isNaN {
+                        self.currentTime = max(0, sec)
+                    }
                 }
             }
         }
 
-        timeControlObserver = avPlayer.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-            Task { @MainActor [weak self] in
-                guard let self, player.currentItem != nil else { return }
-                switch player.timeControlStatus {
-                case .playing:
-                    self.playbackState = .playing
-                case .paused:
-                    if case .failed = self.playbackState {
-                        return
+        if timeControlObserver == nil {
+            timeControlObserver = avPlayer.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+                Task { @MainActor [weak self] in
+                    guard let self, player.currentItem != nil else { return }
+                    switch player.timeControlStatus {
+                    case .playing:
+                        self.playbackState = .playing
+                    case .paused:
+                        if case .failed = self.playbackState {
+                            return
+                        }
+                        self.playbackState = .paused
+                    case .waitingToPlayAtSpecifiedRate:
+                        self.playbackState = .buffering
+                    @unknown default:
+                        break
                     }
-                    self.playbackState = .paused
-                case .waitingToPlayAtSpecifiedRate:
-                    self.playbackState = .buffering
-                @unknown default:
-                    break
                 }
             }
         }
@@ -361,5 +423,12 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
     @objc private func handleItemDidPlayToEndTime() {
         playbackState = .paused
         onPlaybackEnded?()
+    }
+
+    private static func makeToleranceTime(from seconds: Double) -> CMTime {
+        guard seconds.isFinite else {
+            return seconds == .infinity ? .positiveInfinity : .zero
+        }
+        return CMTime(seconds: max(0, seconds), preferredTimescale: 600)
     }
 }

@@ -13,4 +13,14 @@ public enum PlayerPlaybackState: Sendable, Equatable {
     case playing
     case paused
     case failed(String)
+
+    /// Indicates whether media playback is actively advancing.
+    public var isPlaying: Bool {
+        self == .playing
+    }
+
+    /// Indicates whether the player is waiting on initial load or network buffering.
+    public var isBuffering: Bool {
+        self == .loading || self == .buffering
+    }
 }

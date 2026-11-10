@@ -6,18 +6,32 @@
 
 import Foundation
 import AMSMB2
+import Synchronization
 
 /// Actor-isolated SMB2/3 network client powered by `AMSMB2`, serializing all `libsmb2` operations safely.
 public actor AMSMB2Client: SMBClientProtocol {
     public let server: SavedSMBConnection
     private let password: String
-    private var manager: SMB2Manager?
+    private let sessionFactory: @Sendable (SavedSMBConnection, String) throws -> any SMB2SessionProtocol
+    private var manager: (any SMB2SessionProtocol)?
     private var connectedShare: String?
+    private var directorySnapshot: AMSMB2DirectorySnapshot?
     private let operationLimiter = SMBVideoThumbnailLimiter(maxConcurrent: 1)
 
     public init(server: SavedSMBConnection, password: String) {
         self.server = server
         self.password = password
+        self.sessionFactory = Self.defaultSessionFactory
+    }
+
+    init(
+        server: SavedSMBConnection,
+        password: String,
+        sessionFactory: @escaping @Sendable (SavedSMBConnection, String) throws -> any SMB2SessionProtocol
+    ) {
+        self.server = server
+        self.password = password
+        self.sessionFactory = sessionFactory
     }
 
     /// Discovers non-hidden share volumes exported by the SMB server.
@@ -31,6 +45,32 @@ public actor AMSMB2Client: SMBClientProtocol {
     public func listDirectory(share: String, path: String) async throws -> [MediaSourceItem] {
         try await operationLimiter.withPermit {
             try await self.performListDirectory(share: share, path: path)
+        }
+    }
+
+    /// Lists a bounded page of child folders and supported media files within the specified share and relative path.
+    ///
+    /// Because `AMSMB2.SMB2Manager.contentsOfDirectory(atPath:)` returns all directory entries in one snapshot and
+    /// SMB2 lacks server-side sorting, the initial un-cursored fetch retrieves and classifies entries once,
+    /// immediately drops raw filesystem dictionaries and unsupported extensions, caches one sorted directory index
+    /// for subsequent cursored reads, and frees the index once exhausted, replaced, or disconnected.
+    public func listDirectoryPage(
+        share: String,
+        path: String,
+        cursor: String?,
+        pageSize: Int,
+        sortBy sortKey: MediaSortKey,
+        order sortOrder: MediaSortOrder
+    ) async throws -> SMBDirectoryPage {
+        try await operationLimiter.withPermit {
+            try await self.performListDirectoryPage(
+                share: share,
+                path: path,
+                cursor: cursor,
+                pageSize: pageSize,
+                sortBy: sortKey,
+                order: sortOrder
+            )
         }
     }
 
@@ -56,11 +96,27 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
     }
 
-    /// Disconnects the underlying SMB session cleanly.
-    public func disconnect() async {
-        try? await operationLimiter.withPermit {
-            await self.performDisconnect()
+    /// Streams a remote SMB file directly to a local file URL.
+    public func downloadFile(
+        share: String,
+        path: String,
+        to localURL: URL,
+        progress: (@Sendable (Int64, Int64) -> Bool)?
+    ) async throws {
+        try await operationLimiter.withPermit {
+            try await self.performDownloadFile(share: share, path: path, to: localURL, progress: progress)
         }
+    }
+
+    /// Disconnects the underlying SMB session cleanly and clears any cached directory index.
+    ///
+    /// Safe to call from a cancelled task; permit acquisition and disconnect complete idempotently.
+    public func disconnect() async {
+        await Task {
+            try? await self.operationLimiter.withPermit {
+                await self.performDisconnect()
+            }
+        }.value
     }
 
     // MARK: - Serialized SMB Implementations
@@ -68,9 +124,9 @@ public actor AMSMB2Client: SMBClientProtocol {
     private func performListShares() async throws -> [String] {
         do {
             let mgr = try getOrCreateManager()
-            let shares = try await mgr.listShares(enumerateHidden: false)
+            let shareNames = try await mgr.listShareNames(enumerateHidden: false)
             connectedShare = nil
-            return shares.map(\.name).sorted {
+            return shareNames.sorted {
                 $0.localizedStandardCompare($1) == .orderedAscending
             }
         } catch is CancellationError {
@@ -82,6 +138,80 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private func performListDirectory(share: String, path: String) async throws -> [MediaSourceItem] {
+        try await fetchAndMapDirectoryEntries(share: share, normalizedPath: Self.normalizeRelativePath(path))
+    }
+
+    private func performListDirectoryPage(
+        share: String,
+        path: String,
+        cursor: String?,
+        pageSize: Int,
+        sortBy sortKey: MediaSortKey,
+        order sortOrder: MediaSortOrder
+    ) async throws -> SMBDirectoryPage {
+        try Task.checkCancellation()
+        guard pageSize > 0 else {
+            return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: nil)
+        }
+
+        let normalizedPath = Self.normalizeRelativePath(path)
+        let offset: Int
+        if let cursor {
+            guard let parsedOffset = Int(cursor), parsedOffset >= 0 else {
+                return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: nil)
+            }
+            offset = parsedOffset
+        } else {
+            offset = 0
+            directorySnapshot = nil
+        }
+
+        let sortedItems: [MediaSourceItem]
+        if let snapshot = directorySnapshot,
+           cursor != nil,
+           snapshot.share == share,
+           snapshot.normalizedPath == normalizedPath,
+           snapshot.sortKey == sortKey,
+           snapshot.sortOrder == sortOrder {
+            sortedItems = snapshot.items
+        } else {
+            directorySnapshot = nil
+            let mapped = try await fetchAndMapDirectoryEntries(share: share, normalizedPath: normalizedPath)
+            try Task.checkCancellation()
+            sortedItems = MediaSourceItemSortComparator.sortFoldersFirst(
+                mapped,
+                sortBy: sortKey,
+                order: sortOrder
+            )
+        }
+
+        guard offset < sortedItems.count else {
+            directorySnapshot = nil
+            return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: sortedItems.count)
+        }
+
+        let endIndex = min(offset + pageSize, sortedItems.count)
+        let hasMore = endIndex < sortedItems.count
+        if hasMore {
+            directorySnapshot = AMSMB2DirectorySnapshot(
+                share: share,
+                normalizedPath: normalizedPath,
+                sortKey: sortKey,
+                sortOrder: sortOrder,
+                items: sortedItems
+            )
+        } else {
+            directorySnapshot = nil
+        }
+
+        return SMBDirectoryPage(
+            items: Array(sortedItems[offset..<endIndex]),
+            nextCursor: hasMore ? String(endIndex) : nil,
+            totalCount: sortedItems.count
+        )
+    }
+
+    private func fetchAndMapDirectoryEntries(share: String, normalizedPath: String) async throws -> [MediaSourceItem] {
         let maxAttempts = 2
         var lastError: Error?
 
@@ -91,8 +221,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
                 try Task.checkCancellation()
 
-                let normalizedPath = Self.normalizeRelativePath(path)
-                let entries = try await mgr.contentsOfDirectory(atPath: normalizedPath)
+                let entries = try await mgr.directoryEntries(atPath: normalizedPath)
                 try Task.checkCancellation()
 
                 var results: [MediaSourceItem] = []
@@ -100,20 +229,19 @@ public actor AMSMB2Client: SMBClientProtocol {
 
                 for entry in entries {
                     if Task.isCancelled { throw CancellationError() }
-                    guard let name = entry[.nameKey] as? String,
+                    guard let name = entry.name,
                           !name.hasPrefix(".") else {
                         continue
                     }
 
-                    let resourceType = entry[.fileResourceTypeKey] as? URLFileResourceType
-                    let entryPath = (entry[.pathKey] as? String)
+                    let entryPath = entry.path
                         ?? (normalizedPath.isEmpty ? name : "\(normalizedPath)/\(name)")
                     let cleanRelativePath = Self.normalizeRelativePath(entryPath)
-                    let modifiedDate = entry[.contentModificationDateKey] as? Date
+                    let modifiedDate = entry.modifiedDate
                     let fullPath = cleanRelativePath.isEmpty ? share : "\(share)/\(cleanRelativePath)"
                     let itemID = "\(server.id)|\(share)::/\(cleanRelativePath)"
 
-                    if resourceType == .directory {
+                    if entry.isDirectory {
                         results.append(
                             MediaSourceItem(
                                 id: itemID,
@@ -127,20 +255,28 @@ public actor AMSMB2Client: SMBClientProtocol {
                                 smbPath: cleanRelativePath
                             )
                         )
-                    } else if resourceType == .regular {
+                    } else if entry.isRegularFile {
                         let ext = (name as NSString).pathExtension.lowercased()
                         guard SupportedMediaTypes.isSupported(extension: ext) else {
                             continue
                         }
-                        let itemType: MediaItemType = SupportedMediaTypes.isVideo(extension: ext) ? .video : .image
-                        let size = Self.extractFileSize(from: entry)
+                        let itemType: MediaItemType
+                        if SupportedMediaTypes.isVideo(extension: ext) {
+                            itemType = .video
+                        } else {
+                            #if !os(tvOS)
+                            itemType = SupportedMediaTypes.isDocument(extension: ext) ? .document : .image
+                            #else
+                            itemType = .image
+                            #endif
+                        }
                         results.append(
                             MediaSourceItem(
                                 id: itemID,
                                 name: name,
                                 path: fullPath,
                                 type: itemType,
-                                size: size,
+                                size: entry.fileSize,
                                 modifiedDate: modifiedDate,
                                 sourceID: server.id,
                                 smbShare: share,
@@ -156,6 +292,7 @@ public actor AMSMB2Client: SMBClientProtocol {
             } catch {
                 if Task.isCancelled { throw CancellationError() }
                 connectedShare = nil
+                directorySnapshot = nil
                 lastError = error
                 if attempt < maxAttempts {
                     try? await Task.sleep(nanoseconds: 250_000_000)
@@ -179,11 +316,11 @@ public actor AMSMB2Client: SMBClientProtocol {
 
                 if let maxBytes, maxBytes > 0 {
                     let range: Range<Int64> = 0..<maxBytes
-                    return try await mgr.contents(atPath: normalizedPath, range: range) { _, _ in
+                    return try await mgr.readContents(atPath: normalizedPath, range: range) { _, _ in
                         !Task.isCancelled
                     }
                 } else {
-                    return try await mgr.contents(atPath: normalizedPath, range: Range<UInt64>?.none) { _, _ in
+                    return try await mgr.readContents(atPath: normalizedPath, range: nil) { _, _ in
                         !Task.isCancelled
                     }
                 }
@@ -215,7 +352,7 @@ public actor AMSMB2Client: SMBClientProtocol {
 
                 let end = offset + Int64(length)
                 let range: Range<Int64> = offset..<end
-                return try await mgr.contents(atPath: normalizedPath, range: range) { _, _ in
+                return try await mgr.readContents(atPath: normalizedPath, range: range) { _, _ in
                     !Task.isCancelled
                 }
             } catch is CancellationError {
@@ -238,8 +375,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         do {
             let mgr = try await ensureConnected(to: share, forceReconnect: false)
             let normalizedPath = Self.normalizeRelativePath(path)
-            let attrs = try await mgr.attributesOfItem(atPath: normalizedPath)
-            return Self.extractFileSize(from: attrs)
+            return try await mgr.fileSize(atPath: normalizedPath)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -248,18 +384,129 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
     }
 
+    private func performDownloadFile(
+        share: String,
+        path: String,
+        to localURL: URL,
+        progress: (@Sendable (Int64, Int64) -> Bool)?
+    ) async throws {
+        let maxAttempts = 2
+        var lastError: Error?
+        let normalizedPath = Self.normalizeRelativePath(path)
+        let directoryURL = localURL.deletingLastPathComponent()
+
+        for attempt in 1...maxAttempts {
+            try Task.checkCancellation()
+            let tempURL = directoryURL.appendingPathComponent(
+                "\(localURL.lastPathComponent).\(UUID().uuidString).part"
+            )
+
+            do {
+                try await performSingleDownloadAttempt(
+                    share: share,
+                    normalizedPath: normalizedPath,
+                    tempURL: tempURL,
+                    destinationURL: localURL,
+                    forceReconnect: attempt > 1,
+                    progress: progress
+                )
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                if let posix = error as? POSIXError, posix.code == .ECANCELED {
+                    throw CancellationError()
+                }
+                connectedShare = nil
+                lastError = error
+                if attempt < maxAttempts {
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                }
+            }
+        }
+
+        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
+    }
+
+    private func performSingleDownloadAttempt(
+        share: String,
+        normalizedPath: String,
+        tempURL: URL,
+        destinationURL: URL,
+        forceReconnect: Bool,
+        progress: (@Sendable (Int64, Int64) -> Bool)?
+    ) async throws {
+        var shouldCleanupTempFile = true
+        defer {
+            if shouldCleanupTempFile {
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+        }
+
+        let cancelledByProgress = Mutex(false)
+        let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
+        try Task.checkCancellation()
+
+        do {
+            try await mgr.downloadItem(atPath: normalizedPath, to: tempURL) { bytes, total in
+                if Task.isCancelled {
+                    cancelledByProgress.withLock { $0 = true }
+                    return false
+                }
+                let shouldContinue = progress?(bytes, total) ?? true
+                if !shouldContinue {
+                    cancelledByProgress.withLock { $0 = true }
+                }
+                return shouldContinue
+            }
+        } catch {
+            if Task.isCancelled || cancelledByProgress.withLock({ $0 }) {
+                throw CancellationError()
+            }
+            throw error
+        }
+
+        if Task.isCancelled || cancelledByProgress.withLock({ $0 }) {
+            throw CancellationError()
+        }
+
+        try Self.installCompletedFile(from: tempURL, to: destinationURL)
+        shouldCleanupTempFile = false
+    }
+
     private func performDisconnect() async {
         try? await manager?.disconnectShare()
         manager = nil
         connectedShare = nil
+        directorySnapshot = nil
     }
 
     // MARK: - Private Helpers
 
-    private func getOrCreateManager() throws -> SMB2Manager {
+    private func getOrCreateManager() throws -> any SMB2SessionProtocol {
         if let existing = manager {
             return existing
         }
+        let created = try sessionFactory(server, password)
+        self.manager = created
+        return created
+    }
+
+    private func ensureConnected(to share: String, forceReconnect: Bool) async throws -> any SMB2SessionProtocol {
+        let mgr = try getOrCreateManager()
+        if forceReconnect || connectedShare != share {
+            if forceReconnect {
+                try? await mgr.disconnectShare()
+                connectedShare = nil
+            }
+            try await mgr.connectShare(name: share)
+            connectedShare = share
+        }
+        return mgr
+    }
+
+    private static let defaultSessionFactory: @Sendable (SavedSMBConnection, String) throws -> any SMB2SessionProtocol = { server, password in
         let cleanHost = server.host
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "smb://", with: "")
@@ -279,21 +526,20 @@ public actor AMSMB2Client: SMBClientProtocol {
             throw SMBError.unreachable(server.host)
         }
         created.timeout = 20.0
-        self.manager = created
-        return created
+        return AMSMB2SessionAdapter(manager: created)
     }
 
-    private func ensureConnected(to share: String, forceReconnect: Bool) async throws -> SMB2Manager {
-        let mgr = try getOrCreateManager()
-        if forceReconnect || connectedShare != share {
-            if forceReconnect {
-                try? await mgr.disconnectShare()
-                connectedShare = nil
-            }
-            try await mgr.connectShare(name: share)
-            connectedShare = share
+    private static func installCompletedFile(from tempURL: URL, to destinationURL: URL) throws {
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            _ = try FileManager.default.replaceItemAt(
+                destinationURL,
+                withItemAt: tempURL,
+                backupItemName: nil,
+                options: []
+            )
+        } else {
+            try FileManager.default.moveItem(at: tempURL, to: destinationURL)
         }
-        return mgr
     }
 
     private func mapError(_ error: Error, share: String?) -> SMBError {
@@ -336,21 +582,5 @@ public actor AMSMB2Client: SMBClientProtocol {
             trimmed = ""
         }
         return trimmed
-    }
-
-    private static func extractFileSize(from dict: [URLResourceKey: Any]) -> Int64 {
-        if let number = dict[.fileSizeKey] as? NSNumber {
-            return number.int64Value
-        }
-        if let val = dict[.fileSizeKey] as? Int64 {
-            return val
-        }
-        if let val = dict[.fileSizeKey] as? UInt64 {
-            return Int64(min(val, UInt64(Int64.max)))
-        }
-        if let val = dict[.fileSizeKey] as? Int {
-            return Int64(val)
-        }
-        return 0
     }
 }

@@ -18,12 +18,14 @@ public final class SharesMediaSource: MediaSource, Sendable {
     public let preferredLayout: MediaSourceLayout = .list
     public let supportedSortKeys: Set<MediaSortKey> = [.name, .date, .size, .type]
 
+    private let cursorStore = SharesCursorStore()
+
     public init(server: SavedSMBConnection, client: any SMBClientProtocol) {
         self.server = server
         self.client = client
     }
 
-    /// Fetches shares (when `folder == nil`) or directory contents on the server.
+    /// Fetches shares (when `folder == nil`) or directory contents on the server using indexed pagination.
     public func fetchItems(
         in folder: MediaSourceItem?,
         sortBy sortKey: MediaSortKey,
@@ -31,19 +33,64 @@ public final class SharesMediaSource: MediaSource, Sendable {
         page: Int,
         pageSize: Int
     ) async throws -> [MediaSourceItem] {
+        try Task.checkCancellation()
+        guard page >= 0, pageSize > 0 else { return [] }
+
+        let scopeKey = "\(folder?.id ?? "__shares__")|\(sortKey.rawValue)|\(sortOrder.rawValue)|\(pageSize)"
+        if page == 0 {
+            await cursorStore.resetScope(scopeKey)
+        }
+
+        let cursorLookup = await cursorStore.cursor(forPage: page, scopeKey: scopeKey, pageSize: pageSize)
+        if cursorLookup.shouldSkipFetch {
+            return []
+        }
+
+        let directoryPage = try await fetchDirectoryPage(
+            in: folder,
+            sortBy: sortKey,
+            order: sortOrder,
+            cursor: cursorLookup.cursor,
+            pageSize: pageSize
+        )
+        try Task.checkCancellation()
+        await cursorStore.record(nextCursor: directoryPage.nextCursor, afterPage: page, forScope: scopeKey)
+        return directoryPage.items
+    }
+
+    /// Fetches a bounded cursor-addressed page of shares or directory contents without materializing trailing pages.
+    ///
+    /// - Parameters:
+    ///   - folder: Target folder item, or `nil` for root SMB shares.
+    ///   - sortKey: Explicit sort attribute.
+    ///   - sortOrder: Sort direction.
+    ///   - cursor: Opaque continuation cursor from a previous `SMBDirectoryPage`, or `nil` for the first page.
+    ///   - pageSize: Maximum number of items to return.
+    /// - Returns: A bounded `SMBDirectoryPage` preserving folder-first order and media classification.
+    public func fetchDirectoryPage(
+        in folder: MediaSourceItem?,
+        sortBy sortKey: MediaSortKey,
+        order sortOrder: MediaSortOrder,
+        cursor: String?,
+        pageSize: Int
+    ) async throws -> SMBDirectoryPage {
+        try Task.checkCancellation()
+        guard pageSize > 0 else {
+            return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: nil)
+        }
+
         if let folder {
-            return try await loadDirectoryItems(
+            return try await loadDirectoryPage(
                 in: folder,
                 sortBy: sortKey,
                 order: sortOrder,
-                page: page,
+                cursor: cursor,
                 pageSize: pageSize
             )
         } else {
-            return try await loadShares(
-                sortBy: sortKey,
+            return try await loadSharesPage(
                 order: sortOrder,
-                page: page,
+                cursor: cursor,
                 pageSize: pageSize
             )
         }
@@ -51,14 +98,39 @@ public final class SharesMediaSource: MediaSource, Sendable {
 
     // MARK: - Private Fetching Helpers
 
-    private func loadShares(
-        sortBy sortKey: MediaSortKey,
+    private func loadSharesPage(
         order sortOrder: MediaSortOrder,
-        page: Int,
+        cursor: String?,
         pageSize: Int
-    ) async throws -> [MediaSourceItem] {
+    ) async throws -> SMBDirectoryPage {
+        let offset: Int
+        if let cursor {
+            guard let parsedOffset = Int(cursor), parsedOffset >= 0 else {
+                return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: nil)
+            }
+            offset = parsedOffset
+        } else {
+            offset = 0
+        }
+
         let shareNames = try await client.listShares()
-        let items: [MediaSourceItem] = shareNames.map { name in
+        try Task.checkCancellation()
+
+        // Sort raw share names before mapping to `MediaSourceItem` to avoid redundant allocations beyond `pageSize`.
+        let sortedNames = shareNames.sorted { lhs, rhs in
+            let cmp = lhs.localizedStandardCompare(rhs)
+            if cmp == .orderedSame {
+                return sortOrder == .ascending ? lhs < rhs : lhs > rhs
+            }
+            return sortOrder == .ascending ? cmp == .orderedAscending : cmp == .orderedDescending
+        }
+
+        guard offset < sortedNames.count else {
+            return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: sortedNames.count)
+        }
+
+        let endIndex = min(offset + pageSize, sortedNames.count)
+        let pageItems = sortedNames[offset..<endIndex].map { name in
             MediaSourceItem(
                 id: "\(server.id)|\(name)::/",
                 name: name,
@@ -71,28 +143,17 @@ public final class SharesMediaSource: MediaSource, Sendable {
                 smbPath: ""
             )
         }
-
-        let sorted = items.sorted { lhs, rhs in
-            let cmp = lhs.name.localizedStandardCompare(rhs.name)
-            if cmp == .orderedSame {
-                return sortOrder == .ascending ? lhs.id < rhs.id : lhs.id > rhs.id
-            }
-            return sortOrder == .ascending ? cmp == .orderedAscending : cmp == .orderedDescending
-        }
-
-        let startIndex = page * pageSize
-        guard startIndex < sorted.count else { return [] }
-        let endIndex = min(startIndex + pageSize, sorted.count)
-        return Array(sorted[startIndex..<endIndex])
+        let nextCursor = endIndex < sortedNames.count ? String(endIndex) : nil
+        return SMBDirectoryPage(items: pageItems, nextCursor: nextCursor, totalCount: sortedNames.count)
     }
 
-    private func loadDirectoryItems(
+    private func loadDirectoryPage(
         in folder: MediaSourceItem,
         sortBy sortKey: MediaSortKey,
         order sortOrder: MediaSortOrder,
-        page: Int,
+        cursor: String?,
         pageSize: Int
-    ) async throws -> [MediaSourceItem] {
+    ) async throws -> SMBDirectoryPage {
         let shareName: String
         let relativePath: String
 
@@ -102,13 +163,24 @@ public final class SharesMediaSource: MediaSource, Sendable {
         } else {
             let components = folder.path.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: true)
             guard let shareNameSub = components.first else {
-                return []
+                return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: 0)
             }
             shareName = String(shareNameSub)
             relativePath = components.count > 1 ? String(components[1]) : ""
         }
 
-        let directoryItems = try await client.listDirectory(share: shareName, path: relativePath).map { item in
+        let rawPage = try await client.listDirectoryPage(
+            share: shareName,
+            path: relativePath,
+            cursor: cursor,
+            pageSize: pageSize,
+            sortBy: sortKey,
+            order: sortOrder
+        )
+        try Task.checkCancellation()
+
+        // Only enrich SMB context metadata on the bounded slice returned by the client.
+        let normalizedItems = rawPage.items.map { item in
             if item.sourceID != nil && item.smbShare != nil {
                 return item
             }
@@ -128,48 +200,10 @@ public final class SharesMediaSource: MediaSource, Sendable {
             )
         }
 
-        // Separate folders from files so folders are always listed first (Section 4)
-        var folders = directoryItems.filter { $0.type == .folder }
-        var files = directoryItems.filter { $0.type != .folder }
-
-        let comparator: (MediaSourceItem, MediaSourceItem) -> Bool = { lhs, rhs in
-            let nameCompare = lhs.name.localizedStandardCompare(rhs.name)
-            switch sortKey {
-            case .name:
-                if nameCompare == .orderedSame {
-                    return sortOrder == .ascending ? lhs.id < rhs.id : lhs.id > rhs.id
-                }
-                return sortOrder == .ascending ? nameCompare == .orderedAscending : nameCompare == .orderedDescending
-            case .date:
-                let lDate = lhs.modifiedDate ?? .distantPast
-                let rDate = rhs.modifiedDate ?? .distantPast
-                if lDate == rDate {
-                    return nameCompare == .orderedAscending
-                }
-                return sortOrder == .ascending ? lDate < rDate : lDate > rDate
-            case .size:
-                if lhs.size == rhs.size {
-                    return nameCompare == .orderedAscending
-                }
-                return sortOrder == .ascending ? lhs.size < rhs.size : lhs.size > rhs.size
-            case .type:
-                let lExt = (lhs.name as NSString).pathExtension
-                let rExt = (rhs.name as NSString).pathExtension
-                let extCompare = lExt.localizedStandardCompare(rExt)
-                if extCompare == .orderedSame {
-                    return sortOrder == .ascending ? nameCompare == .orderedAscending : nameCompare == .orderedDescending
-                }
-                return sortOrder == .ascending ? extCompare == .orderedAscending : extCompare == .orderedDescending
-            }
-        }
-
-        folders.sort(by: comparator)
-        files.sort(by: comparator)
-
-        let combined = folders + files
-        let startIndex = page * pageSize
-        guard startIndex < combined.count else { return [] }
-        let endIndex = min(startIndex + pageSize, combined.count)
-        return Array(combined[startIndex..<endIndex])
+        return SMBDirectoryPage(
+            items: normalizedItems,
+            nextCursor: rawPage.nextCursor,
+            totalCount: rawPage.totalCount
+        )
     }
 }

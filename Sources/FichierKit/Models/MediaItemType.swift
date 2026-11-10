@@ -10,4 +10,7 @@ public enum MediaItemType: Sendable, Hashable, Equatable {
     case folder
     case image
     case video
+    #if !os(tvOS)
+    case document
+    #endif
 }

@@ -26,9 +26,8 @@ public actor DefaultMediaSourceResolver: MediaSourceResolverProtocol {
 
     /// Invalidates a cached source (e.g. after server credentials or details are edited or removed).
     public func invalidateSource(id: String) async {
-        if let sharesSource = registeredSources.removeValue(forKey: id) as? SharesMediaSource,
-           let amsmb2 = sharesSource.client as? AMSMB2Client {
-            await amsmb2.disconnect()
+        if let sharesSource = registeredSources.removeValue(forKey: id) as? SharesMediaSource {
+            await sharesSource.client.disconnect()
         }
     }
 
