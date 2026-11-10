@@ -441,6 +441,10 @@ struct FichierKitTests {
         #expect(avEngine.playbackRate == 1.5)
         avEngine.seek(to: 12.0, toleranceBefore: 0, toleranceAfter: 0, completion: nil)
         #expect(avEngine.currentTime == 12.0)
+        avEngine.seek(to: 13.0, toleranceBefore: .nan, toleranceAfter: -.infinity, completion: nil)
+        #expect(avEngine.currentTime == 13.0)
+        avEngine.seek(to: 14.0, toleranceBefore: .infinity, toleranceAfter: .nan, completion: nil)
+        #expect(avEngine.currentTime == 14.0)
         avEngine.tearDown()
 
         let vlcEngine = TVVLCPlayerEngine()

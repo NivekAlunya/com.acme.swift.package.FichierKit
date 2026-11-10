@@ -166,12 +166,8 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
         let clamped = max(0, min(seconds, duration > 0 ? duration : seconds))
         currentTime = clamped
         let targetTime = CMTime(seconds: clamped, preferredTimescale: 600)
-        let tolBefore: CMTime = toleranceBefore.isInfinite
-            ? .positiveInfinity
-            : CMTime(seconds: max(0, toleranceBefore), preferredTimescale: 600)
-        let tolAfter: CMTime = toleranceAfter.isInfinite
-            ? .positiveInfinity
-            : CMTime(seconds: max(0, toleranceAfter), preferredTimescale: 600)
+        let tolBefore = Self.makeToleranceTime(from: toleranceBefore)
+        let tolAfter = Self.makeToleranceTime(from: toleranceAfter)
         avPlayer.currentItem?.cancelPendingSeeks()
         avPlayer.seek(to: targetTime, toleranceBefore: tolBefore, toleranceAfter: tolAfter) { finished in
             Task { @MainActor in
@@ -427,5 +423,12 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
     @objc private func handleItemDidPlayToEndTime() {
         playbackState = .paused
         onPlaybackEnded?()
+    }
+
+    private static func makeToleranceTime(from seconds: Double) -> CMTime {
+        guard seconds.isFinite else {
+            return seconds == .infinity ? .positiveInfinity : .zero
+        }
+        return CMTime(seconds: max(0, seconds), preferredTimescale: 600)
     }
 }
