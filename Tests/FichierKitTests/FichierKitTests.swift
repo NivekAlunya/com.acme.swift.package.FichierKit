@@ -535,12 +535,24 @@ struct FichierKitTests {
             reportedSizes: ["Media/unknown.bin": 0]
         )
         let unknownURL = tempDir.appendingPathComponent("unknown.bin")
-        try await unknownClient.downloadFile(share: "Media", path: "unknown.bin", to: unknownURL)
+        let (progressStream, progressContinuation) = AsyncStream.makeStream(of: (Int64, Int64).self)
+        try await unknownClient.downloadFile(share: "Media", path: "unknown.bin", to: unknownURL) { bytes, total in
+            progressContinuation.yield((bytes, total))
+            return true
+        }
+        progressContinuation.finish()
 
         #expect(try Data(contentsOf: unknownURL) == unknownPayload)
         let unknownRanges = await unknownClient.recordedRanges
         #expect(unknownRanges.map(\.offset) == [0, 1_048_576, 1_300_000])
         #expect(await unknownClient.readFileDataCallCount == 0)
+
+        var progressEvents: [(Int64, Int64)] = []
+        for await event in progressStream {
+            progressEvents.append(event)
+        }
+        #expect(progressEvents.map(\.0) == [1_048_576, 1_300_000])
+        #expect(progressEvents.allSatisfy { $0.1 == 0 })
 
         let directoryEntries = try FileManager.default.contentsOfDirectory(atPath: tempDir.path).sorted()
         #expect(directoryEntries == ["empty.bin", "unknown.bin"])

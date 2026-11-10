@@ -180,7 +180,7 @@ public extension SMBClientProtocol {
                 try openedHandle.write(contentsOf: chunk)
                 bytesWritten += Int64(chunk.count)
 
-                if let progress, !progress(bytesWritten, bytesWritten) {
+                if let progress, !progress(bytesWritten, total) {
                     throw CancellationError()
                 }
             }
