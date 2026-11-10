@@ -36,7 +36,7 @@ public final class SharesMediaSource: MediaSource, Sendable {
         try Task.checkCancellation()
         guard page >= 0, pageSize > 0 else { return [] }
 
-        let scopeKey = "\(folder?.id ?? "__shares__")|\(sortKey.rawValue)|\(sortOrder.rawValue)"
+        let scopeKey = "\(folder?.id ?? "__shares__")|\(sortKey.rawValue)|\(sortOrder.rawValue)|\(pageSize)"
         if page == 0 {
             await cursorStore.resetScope(scopeKey)
         }

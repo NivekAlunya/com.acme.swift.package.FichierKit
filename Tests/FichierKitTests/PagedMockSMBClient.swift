@@ -23,6 +23,7 @@ actor PagedMockSMBClient: SMBClientProtocol {
 
     private let mockShares: [String]
     private let pagesByCursor: [String: SMBDirectoryPage]
+    private let onPageRequest: (@Sendable (Int, PageRequest) async throws -> Void)?
 
     private(set) var disconnectCallCount: Int = 0
     private(set) var listDirectoryCallCount: Int = 0
@@ -30,10 +31,12 @@ actor PagedMockSMBClient: SMBClientProtocol {
 
     init(
         mockShares: [String] = [],
-        pagesByCursor: [String: SMBDirectoryPage] = [:]
+        pagesByCursor: [String: SMBDirectoryPage] = [:],
+        onPageRequest: (@Sendable (Int, PageRequest) async throws -> Void)? = nil
     ) {
         self.mockShares = mockShares
         self.pagesByCursor = pagesByCursor
+        self.onPageRequest = onPageRequest
     }
 
     func listShares() async throws -> [String] {
@@ -55,16 +58,19 @@ actor PagedMockSMBClient: SMBClientProtocol {
         order sortOrder: MediaSortOrder
     ) async throws -> SMBDirectoryPage {
         try Task.checkCancellation()
-        requestedPages.append(
-            PageRequest(
-                share: share,
-                path: path,
-                cursor: cursor,
-                pageSize: pageSize,
-                sortKey: sortKey,
-                sortOrder: sortOrder
-            )
+        let request = PageRequest(
+            share: share,
+            path: path,
+            cursor: cursor,
+            pageSize: pageSize,
+            sortKey: sortKey,
+            sortOrder: sortOrder
         )
+        requestedPages.append(request)
+        let callIndex = requestedPages.count
+        if let onPageRequest {
+            try await onPageRequest(callIndex, request)
+        }
         guard pageSize > 0 else {
             return SMBDirectoryPage(items: [], nextCursor: nil, totalCount: nil)
         }

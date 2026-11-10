@@ -911,4 +911,111 @@ struct FichierKitTests {
         await cancelledTask.value
         await client.disconnect()
     }
+
+    @Test("SharesMediaSource preserves cursor across failed or cancelled page retries and isolates scopes by folder and pageSize")
+    func testSharesMediaSourceRetryAndScopeIsolation() async throws {
+        let server = SavedSMBConnection(host: "192.168.1.50", username: "kevin", lastConnected: Date())
+        let photoOne = MediaSourceItem(id: "p1", name: "IMG_1.jpg", path: "Media/A/IMG_1.jpg", type: .image, size: 100)
+        let photoTwo = MediaSourceItem(id: "p2", name: "IMG_2.jpg", path: "Media/A/IMG_2.jpg", type: .image, size: 200)
+        let photoB = MediaSourceItem(id: "pb", name: "IMG_B.jpg", path: "Media/B/IMG_B.jpg", type: .image, size: 300)
+
+        let (enteredCancelStream, enteredCancelContinuation) = AsyncStream.makeStream(of: Void.self)
+        let client = PagedMockSMBClient(
+            mockShares: ["Media"],
+            pagesByCursor: [
+                PagedMockSMBClient.initialCursorKey: SMBDirectoryPage(
+                    items: [photoOne],
+                    nextCursor: "cursor-page-1",
+                    totalCount: 2
+                ),
+                "cursor-page-1": SMBDirectoryPage(
+                    items: [photoTwo],
+                    nextCursor: nil,
+                    totalCount: 2
+                ),
+                "folderB-cursor": SMBDirectoryPage(
+                    items: [photoB],
+                    nextCursor: nil,
+                    totalCount: 2
+                )
+            ],
+            onPageRequest: { callIndex, request in
+                // Fail first attempt of page 1 (callIndex == 2) and stall/cancel second attempt (callIndex == 3)
+                if callIndex == 2 {
+                    #expect(request.cursor == "cursor-page-1")
+                    throw SMBError.timeout
+                }
+                if callIndex == 3 {
+                    #expect(request.cursor == "cursor-page-1")
+                    enteredCancelContinuation.yield()
+                    try await Task.sleep(for: .seconds(5))
+                }
+            }
+        )
+        let source = SharesMediaSource(server: server, client: client)
+        let folderA = MediaSourceItem(
+            id: "folderA",
+            name: "A",
+            path: "Media/A",
+            type: .folder,
+            sourceID: server.id,
+            smbShare: "Media",
+            smbPath: "A"
+        )
+        let folderB = MediaSourceItem(
+            id: "folderB",
+            name: "B",
+            path: "Media/B",
+            type: .folder,
+            sourceID: server.id,
+            smbShare: "Media",
+            smbPath: "B"
+        )
+
+        let page0 = try await source.fetchItems(in: folderA, sortBy: .name, order: .ascending, page: 0, pageSize: 1)
+        #expect(page0.map(\.id) == ["p1"])
+
+        await #expect(throws: SMBError.timeout) {
+            try await source.fetchItems(in: folderA, sortBy: .name, order: .ascending, page: 1, pageSize: 1)
+        }
+
+        let cancelTask = Task {
+            try await source.fetchItems(in: folderA, sortBy: .name, order: .ascending, page: 1, pageSize: 1)
+        }
+        for await _ in enteredCancelStream {
+            break
+        }
+        cancelTask.cancel()
+        await #expect(throws: CancellationError.self) {
+            _ = try await cancelTask.value
+        }
+
+        // Retrying page 1 after both error and cancellation must reuse the exact cursor recorded by page 0
+        let retriedPage1 = try await source.fetchItems(in: folderA, sortBy: .name, order: .ascending, page: 1, pageSize: 1)
+        #expect(retriedPage1.map(\.id) == ["p2"])
+
+        // Different pageSize must be isolated into its own scope rather than hitting folderA's pageSize=1 exhaustion
+        let differentPageSizePage2 = try await source.fetchItems(
+            in: folderA,
+            sortBy: .name,
+            order: .ascending,
+            page: 2,
+            pageSize: 5
+        )
+        #expect(differentPageSizePage2.isEmpty)
+
+        // Resetting folderB page 0 must not corrupt or reset folderA
+        _ = try await source.fetchItems(in: folderB, sortBy: .name, order: .ascending, page: 0, pageSize: 1)
+        let folderAPastEnd = try await source.fetchItems(in: folderA, sortBy: .name, order: .ascending, page: 2, pageSize: 1)
+        #expect(folderAPastEnd.isEmpty)
+
+        let requests = await client.requestedPages
+        #expect(requests.count == 6)
+        #expect(requests[0].cursor == nil)
+        #expect(requests[1].cursor == "cursor-page-1")
+        #expect(requests[2].cursor == "cursor-page-1")
+        #expect(requests[3].cursor == "cursor-page-1")
+        #expect(requests[4].cursor == "10")
+        #expect(requests[5].path == "B")
+    }
 }
