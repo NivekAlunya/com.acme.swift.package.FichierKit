@@ -448,16 +448,23 @@ public actor AMSMB2Client: SMBClientProtocol {
         let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
         try Task.checkCancellation()
 
-        try await mgr.downloadItem(atPath: normalizedPath, to: tempURL) { bytes, total in
-            if Task.isCancelled {
-                cancelledByProgress.withLock { $0 = true }
-                return false
+        do {
+            try await mgr.downloadItem(atPath: normalizedPath, to: tempURL) { bytes, total in
+                if Task.isCancelled {
+                    cancelledByProgress.withLock { $0 = true }
+                    return false
+                }
+                let shouldContinue = progress?(bytes, total) ?? true
+                if !shouldContinue {
+                    cancelledByProgress.withLock { $0 = true }
+                }
+                return shouldContinue
             }
-            let shouldContinue = progress?(bytes, total) ?? true
-            if !shouldContinue {
-                cancelledByProgress.withLock { $0 = true }
+        } catch {
+            if Task.isCancelled || cancelledByProgress.withLock({ $0 }) {
+                throw CancellationError()
             }
-            return shouldContinue
+            throw error
         }
 
         if Task.isCancelled || cancelledByProgress.withLock({ $0 }) {

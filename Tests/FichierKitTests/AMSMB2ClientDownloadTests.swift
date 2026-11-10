@@ -204,6 +204,84 @@ struct AMSMB2ClientDownloadTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["progress_cancel.jpg"])
     }
 
+    @Test("Progress cancellation throwing a generic error aborts immediately without retry, preserves destination, and cleans .part files")
+    func testProgressCancellationWithGenericErrorAbortsWithoutRetrying() async throws {
+        let dir = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let destinationURL = dir.appendingPathComponent("progress_generic_error.mp4")
+        let originalData = Data("Existing Valid Video".utf8)
+        try originalData.write(to: destinationURL)
+
+        let posixSession = MockSMB2Session { _, _, tempURL, progress in
+            try Data("partial download before io error".utf8).write(to: tempURL)
+            let shouldContinue = progress?(32, 2048) ?? true
+            #expect(!shouldContinue)
+            throw POSIXError(.EIO)
+        }
+
+        let posixClient = AMSMB2Client(server: Self.testServer, password: "secret") { _, _ in posixSession }
+
+        await #expect(throws: CancellationError.self) {
+            try await posixClient.downloadFile(
+                share: "Media",
+                path: "progress_generic_error.mp4",
+                to: destinationURL
+            ) { _, _ in
+                false
+            }
+        }
+
+        #expect(await posixSession.downloadAttempts.count == 1)
+        #expect(try Data(contentsOf: destinationURL) == originalData)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["progress_generic_error.mp4"])
+
+        let smbSession = MockSMB2Session { _, _, tempURL, progress in
+            try Data("partial download before timeout".utf8).write(to: tempURL)
+            let shouldContinue = progress?(64, 2048) ?? true
+            #expect(!shouldContinue)
+            throw SMBError.timeout
+        }
+
+        let smbClient = AMSMB2Client(server: Self.testServer, password: "secret") { _, _ in smbSession }
+
+        await #expect(throws: CancellationError.self) {
+            try await smbClient.downloadFile(
+                share: "Media",
+                path: "progress_generic_error.mp4",
+                to: destinationURL
+            ) { _, _ in
+                false
+            }
+        }
+
+        #expect(await smbSession.downloadAttempts.count == 1)
+        #expect(try Data(contentsOf: destinationURL) == originalData)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["progress_generic_error.mp4"])
+
+        let normalReturnSession = MockSMB2Session { _, _, tempURL, progress in
+            try Data("completed before noticing cancellation".utf8).write(to: tempURL)
+            let shouldContinue = progress?(2048, 2048) ?? true
+            #expect(!shouldContinue)
+        }
+
+        let normalReturnClient = AMSMB2Client(server: Self.testServer, password: "secret") { _, _ in normalReturnSession }
+
+        await #expect(throws: CancellationError.self) {
+            try await normalReturnClient.downloadFile(
+                share: "Media",
+                path: "progress_generic_error.mp4",
+                to: destinationURL
+            ) { _, _ in
+                false
+            }
+        }
+
+        #expect(await normalReturnSession.downloadAttempts.count == 1)
+        #expect(try Data(contentsOf: destinationURL) == originalData)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["progress_generic_error.mp4"])
+    }
+
     @Test("Download to new destination moves completed .part file cleanly and leaves no file on error")
     func testDownloadToNewDestinationSuccessAndFailureCleanup() async throws {
         let dir = try Self.makeTempDir()
