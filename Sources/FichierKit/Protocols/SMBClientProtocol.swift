@@ -114,7 +114,6 @@ public extension SMBClientProtocol {
         let directoryURL = localURL.deletingLastPathComponent()
         let tempURL = directoryURL.appendingPathComponent("\(localURL.lastPathComponent).\(UUID().uuidString).part")
 
-        try Data().write(to: tempURL, options: .withoutOverwriting)
         var shouldCleanupTempFile = true
         var fileHandle: FileHandle?
 
@@ -128,6 +127,7 @@ public extension SMBClientProtocol {
             }
         }
 
+        try Data().write(to: tempURL, options: .withoutOverwriting)
         let openedHandle = try FileHandle(forWritingTo: tempURL)
         fileHandle = openedHandle
 

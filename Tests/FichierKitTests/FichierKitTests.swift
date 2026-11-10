@@ -685,6 +685,21 @@ struct FichierKitTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: tempDir.path) == ["existing_before_eof.bin"])
     }
 
+    @Test("Default SMB download cleans up when destination directory is unavailable")
+    func testDefaultSMBDownloadUnavailableDestinationDirectory() async throws {
+        let client = RangeOnlyMockSMBClient(files: ["Media/video.bin": Data("video".utf8)])
+        let parentURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fichierkit_dl_missing_parent_\(UUID().uuidString)", isDirectory: true)
+        let destinationURL = parentURL.appendingPathComponent("video.bin")
+
+        await #expect(throws: Error.self) {
+            try await client.downloadFile(share: "Media", path: "video.bin", to: destinationURL)
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: parentURL.path))
+        #expect(!FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
     @Test("Player engines clamp playbackRate and ignore non-finite values")
     @MainActor
     func testPlayerEnginesPlaybackRateClampingAndNonFiniteValues() {
