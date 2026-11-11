@@ -31,12 +31,13 @@ public final class VLCVideoThumbnailSession: NSObject {
         super.init()
     }
 
-    /// Starts asynchronous thumbnail generation for the given file or loopback HTTP URL.
+    /// Starts asynchronous thumbnail generation for the given file, network or direct `smb://` URL.
     public func start(
         with url: URL,
         maxDimension: CGFloat,
         snapshotPosition: Float,
-        snapshotTimeSeconds: Double? = nil
+        snapshotTimeSeconds: Double? = nil,
+        options: VLCPlaybackOptions? = nil
     ) {
         guard !didComplete else { return }
 
@@ -44,6 +45,10 @@ public final class VLCVideoThumbnailSession: NSObject {
         guard let media = VLCMedia(url: url) else {
             notifyCompletion(image: nil)
             return
+        }
+
+        if let mediaOptions = options?.makeVLCMediaOptionsDictionary(for: url) {
+            media.addOptions(mediaOptions)
         }
 
         let thumb = VLCMediaThumbnailer(media: media, andDelegate: self)
