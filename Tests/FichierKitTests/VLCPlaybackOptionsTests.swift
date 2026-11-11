@@ -189,4 +189,33 @@ struct VLCPlaybackOptionsTests {
         #expect(engine.mediaPlayer.media == nil)
         #endif
     }
+
+    #if canImport(UIKit)
+    @Test("VLCVideoThumbnailActor accepts VLCPlaybackOptions for video thumbnail generation")
+    func testVLCVideoThumbnailActorWithPlaybackOptions() async throws {
+        let tempVideoURL = try await VideoTestFixtureGenerator.createSampleMP4File()
+        defer { try? FileManager.default.removeItem(at: tempVideoURL) }
+
+        let options = VLCPlaybackOptions(
+            username: "guest",
+            password: "password123",
+            networkCachingMs: 500
+        )
+
+        let image = await VLCVideoThumbnailActor.shared.generateThumbnail(
+            from: tempVideoURL,
+            maxDimension: 320,
+            snapshotPosition: 0.05,
+            timeoutSeconds: 8.0,
+            options: options
+        )
+
+        #if canImport(VLCKit)
+        let loaded = try #require(image)
+        #expect(loaded.size.width > 0)
+        #else
+        #expect(image == nil)
+        #endif
+    }
+    #endif
 }

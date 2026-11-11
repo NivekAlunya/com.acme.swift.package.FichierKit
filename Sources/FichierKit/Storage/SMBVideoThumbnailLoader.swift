@@ -208,12 +208,12 @@ public actor SMBVideoThumbnailLoader {
             guard !Task.isCancelled else { return nil }
             return await extractWithDirectSMBVLC(
                 server: server, password: password, share: share, path: path,
-                fileName: fileName, maxDimension: maxDimension
+                maxDimension: maxDimension
             )
         }
         if let extendedImage = await extractWithDirectSMBVLC(
             server: server, password: password, share: share, path: path,
-            fileName: fileName, maxDimension: maxDimension
+            maxDimension: maxDimension
         ) {
             return extendedImage
         }
@@ -313,7 +313,6 @@ public actor SMBVideoThumbnailLoader {
         password: String,
         share: String,
         path: String,
-        fileName: String,
         maxDimension: CGFloat
     ) async -> UIImage? {
         guard !Task.isCancelled, let server else { return nil }
