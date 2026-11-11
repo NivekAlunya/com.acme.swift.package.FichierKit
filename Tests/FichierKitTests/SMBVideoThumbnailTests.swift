@@ -274,4 +274,35 @@ struct SMBVideoThumbnailTests {
         }
         #expect(normalResult == 42)
     }
+
+    @Test("Direct extractSMBFrame extracts native frame and respects zero/invalid input safely")
+    func testExtractSMBFrameDirect() async throws {
+        let tempVideoURL = try await VideoTestFixtureGenerator.createSampleMP4File()
+        defer { try? FileManager.default.removeItem(at: tempVideoURL) }
+
+        let mp4Data = try Data(contentsOf: tempVideoURL)
+        let client = MockSMBClient(mockShares: ["Videos"], mockFileData: ["Videos/clip.mp4": mp4Data])
+
+        // Valid extract
+        let frame = await SMBVideoThumbnailLoader.extractSMBFrame(
+            client: client,
+            share: "Videos",
+            path: "clip.mp4",
+            fileName: "clip.mp4",
+            fileSize: Int64(mp4Data.count),
+            maxDimension: 320
+        )
+        let image = try #require(frame)
+        #expect(image.size.width > 0)
+
+        // Zero-size input should short-circuit and return nil
+        let zeroFrame = await SMBVideoThumbnailLoader.extractSMBFrame(
+            client: client,
+            share: "Videos",
+            path: "clip.mp4",
+            fileName: "clip.mp4",
+            fileSize: 0
+        )
+        #expect(zeroFrame == nil)
+    }
 }

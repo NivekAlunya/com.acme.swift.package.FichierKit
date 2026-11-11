@@ -70,6 +70,12 @@ public protocol PlayerEngine: AnyObject, Sendable {
         completion: (@MainActor @Sendable (Bool) -> Void)?
     )
 
+    /// Jumps forward or backward by the given relative offset in seconds.
+    func jump(by deltaSeconds: Double)
+
+    /// Selects an embedded chapter by its index in `availableChapters`.
+    func selectChapter(at index: Int)
+
     /// Advances to the next video item in the playlist.
     func next()
 
@@ -84,4 +90,19 @@ public protocol PlayerEngine: AnyObject, Sendable {
 
     /// Releases hardware decoders and frees streaming buffers.
     func tearDown()
+}
+
+public extension PlayerEngine {
+    func jump(by deltaSeconds: Double) {
+        guard deltaSeconds.isFinite, deltaSeconds != 0 else { return }
+        let target = duration > 0
+            ? min(max(0, currentTime + deltaSeconds), duration)
+            : max(0, currentTime + deltaSeconds)
+        seek(to: target, precision: .fast)
+    }
+
+    func selectChapter(at index: Int) {
+        guard availableChapters.indices.contains(index) else { return }
+        seek(to: availableChapters[index].startTime, precision: .exact)
+    }
 }

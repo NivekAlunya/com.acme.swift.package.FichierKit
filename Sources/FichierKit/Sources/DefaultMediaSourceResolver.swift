@@ -55,7 +55,7 @@ public actor DefaultMediaSourceResolver: MediaSourceResolverProtocol {
         }
 
         let client = AMSMB2Client(server: server, password: password)
-        let sharesSource = SharesMediaSource(server: server, client: client)
+        let sharesSource = SharesMediaSource(server: server, client: client, password: password)
         registeredSources[sourceID] = sharesSource
         return sharesSource
     }

@@ -169,54 +169,55 @@ public actor SMBVideoThumbnailLoader {
                 return nil
             }
 
-            if !SupportedMediaTypes.isExtendedVideo(extension: fileExtension) {
-                if let nativeImage = await Self.extractWithSMBAVFoundation(
-                    client: sharesSource.client,
-                    share: share,
-                    path: path,
-                    fileName: fileName,
-                    fileSize: resolvedSize,
-                    maxDimension: maxDimension,
-                    timeoutSeconds: 12.0
-                ) {
-                    return nativeImage
-                }
-
-                guard !Task.isCancelled else { return nil }
-                return await Self.extractWithSMBStreamingServer(
-                    client: sharesSource.client,
-                    share: share,
-                    path: path,
-                    fileName: fileName,
-                    fileSize: resolvedSize,
-                    maxDimension: maxDimension,
-                    preferVLC: true
-                )
-            } else {
-                if let extendedImage = await Self.extractWithSMBStreamingServer(
-                    client: sharesSource.client,
-                    share: share,
-                    path: path,
-                    fileName: fileName,
-                    fileSize: resolvedSize,
-                    maxDimension: maxDimension,
-                    preferVLC: true
-                ) {
-                    return extendedImage
-                }
-
-                guard !Task.isCancelled else { return nil }
-                return await Self.extractWithSMBAVFoundation(
-                    client: sharesSource.client,
-                    share: share,
-                    path: path,
-                    fileName: fileName,
-                    fileSize: resolvedSize,
-                    maxDimension: maxDimension,
-                    timeoutSeconds: 8.0
-                )
-            }
+            return await Self.extractSMBFrame(
+                client: sharesSource.client,
+                share: share,
+                path: path,
+                fileName: fileName,
+                fileSize: resolvedSize,
+                maxDimension: maxDimension
+            )
         }
+    }
+
+    /// Extracts a representative frame from a remote SMB video, bypassing cache and concurrency limiting.
+    ///
+    /// Native containers try `AVFoundation` first and fall back to `VLCKit`; extended containers
+    /// (MKV, AVI, WebM, ...) use the reverse order. Callers own caching and concurrency policy.
+    public nonisolated static func extractSMBFrame(
+        client: any SMBClientProtocol,
+        share: String,
+        path: String,
+        fileName: String,
+        fileSize: Int64,
+        maxDimension: CGFloat = standardMaxDimension
+    ) async -> UIImage? {
+        guard fileSize > 0, !Task.isCancelled else { return nil }
+        let ext = fileExtension(fileName: fileName, fallbackPath: path)
+        if !SupportedMediaTypes.isExtendedVideo(extension: ext) {
+            if let nativeImage = await extractWithSMBAVFoundation(
+                client: client, share: share, path: path, fileName: fileName,
+                fileSize: fileSize, maxDimension: maxDimension, timeoutSeconds: 12.0
+            ) {
+                return nativeImage
+            }
+            guard !Task.isCancelled else { return nil }
+            return await extractWithSMBStreamingServer(
+                client: client, share: share, path: path, fileName: fileName,
+                fileSize: fileSize, maxDimension: maxDimension, preferVLC: true
+            )
+        }
+        if let extendedImage = await extractWithSMBStreamingServer(
+            client: client, share: share, path: path, fileName: fileName,
+            fileSize: fileSize, maxDimension: maxDimension, preferVLC: true
+        ) {
+            return extendedImage
+        }
+        guard !Task.isCancelled else { return nil }
+        return await extractWithSMBAVFoundation(
+            client: client, share: share, path: path, fileName: fileName,
+            fileSize: fileSize, maxDimension: maxDimension, timeoutSeconds: 8.0
+        )
     }
 
     // MARK: - Frame Extraction Pipeline
@@ -298,6 +299,7 @@ public actor SMBVideoThumbnailLoader {
         } onCancel: {
             delegate.cancelAll()
         }
+        // AVURLAsset only holds the resource-loader delegate weakly; keep delegate and queue alive until extraction finishes.
         withExtendedLifetime((delegate, loaderQueue)) {}
         return result
     }
@@ -352,6 +354,9 @@ public actor SMBVideoThumbnailLoader {
     ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
 
+        // Race the extraction against a timeout: AVFoundation can hang indefinitely on files it
+        // cannot parse over a custom loader. The first child to finish wins and the other is
+        // cancelled. `onAbort` additionally cancels in-flight SMB reads so the socket is freed.
         return await withTaskGroup(of: UIImage?.self) { group in
             group.addTask {
                 await renderAVAssetFrame(asset: asset, maxDimension: maxDimension)
@@ -389,6 +394,8 @@ public actor SMBVideoThumbnailLoader {
 
         guard !Task.isCancelled, targetTime > .zero else { return nil }
 
+        // Fallback when the preferred time cannot be decoded (e.g. file shorter than reported):
+        // accept any nearby keyframe at the very start.
         generator.requestedTimeToleranceBefore = .positiveInfinity
         generator.requestedTimeToleranceAfter = .positiveInfinity
         if let (cgImage, _) = try? await generator.image(at: .zero) {
@@ -398,6 +405,9 @@ public actor SMBVideoThumbnailLoader {
         return nil
     }
 
+    /// Picks the frame to sample and how far from it AVFoundation may snap (looser tolerance = faster,
+    /// as it can decode the nearest keyframe). Avoids the first frame, which is often black: 10 s into
+    /// long videos, 25% into medium ones, and frame zero for clips of 2 s or less.
     private nonisolated static func resolveSampleTiming(durationSeconds: Double?) -> (CMTime, CMTime) {
         guard let durationSeconds, durationSeconds.isFinite, !durationSeconds.isNaN, durationSeconds > 0 else {
             return (CMTime(seconds: 10.0, preferredTimescale: 600), CMTime(seconds: 2.5, preferredTimescale: 600))

@@ -344,6 +344,9 @@ public actor AMSMB2Client: SMBClientProtocol {
         var lastError: Error?
         let normalizedPath = Self.normalizeRelativePath(path)
 
+        // Retry with linear backoff. Retries force a full reconnect because libsmb2 sessions that
+        // timed out or were dropped by the server stay unusable until the share is re-mounted.
+        // Cancellation is never retried and is always rethrown as `CancellationError`.
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             do {
@@ -352,6 +355,8 @@ public actor AMSMB2Client: SMBClientProtocol {
 
                 let end = offset + Int64(length)
                 let range: Range<Int64> = offset..<end
+                // The progress closure is the only hook libsmb2 offers to abort a read in flight:
+                // returning `false` stops the transfer when the Swift task is cancelled.
                 return try await mgr.readContents(atPath: normalizedPath, range: range) { _, _ in
                     !Task.isCancelled
                 }
@@ -395,6 +400,9 @@ public actor AMSMB2Client: SMBClientProtocol {
         let normalizedPath = Self.normalizeRelativePath(path)
         let directoryURL = localURL.deletingLastPathComponent()
 
+        // Each attempt downloads into a unique `.part` file next to the destination and is only moved
+        // into place on success (`installCompletedFile`), so a failed or cancelled download can never
+        // leave a truncated file that later looks like a valid cache entry.
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             let tempURL = directoryURL.appendingPathComponent(
@@ -415,6 +423,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 throw CancellationError()
             } catch {
                 if Task.isCancelled { throw CancellationError() }
+                // libsmb2 reports an aborted transfer (progress callback returned false) as ECANCELED.
                 if let posix = error as? POSIXError, posix.code == .ECANCELED {
                     throw CancellationError()
                 }
@@ -444,6 +453,9 @@ public actor AMSMB2Client: SMBClientProtocol {
             }
         }
 
+        // libsmb2 invokes the progress closure on its own thread and surfaces an abort only as a
+        // generic error. This flag records that *we* requested the abort so it can be reported as
+        // `CancellationError` instead of a retryable network failure. `Mutex` guards cross-thread access.
         let cancelledByProgress = Mutex(false)
         let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
         try Task.checkCancellation()
@@ -507,6 +519,8 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private static let defaultSessionFactory: @Sendable (SavedSMBConnection, String) throws -> any SMB2SessionProtocol = { server, password in
+        // Normalize user-entered hosts: strip whitespace and `smb://`, and drop an IPv6 zone id
+        // (`%en0`), which libsmb2 cannot parse inside a URL.
         let cleanHost = server.host
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "smb://", with: "")
@@ -529,6 +543,8 @@ public actor AMSMB2Client: SMBClientProtocol {
         return AMSMB2SessionAdapter(manager: created)
     }
 
+    /// Atomically publishes a finished download. `replaceItemAt` swaps an existing file in one step,
+    /// so concurrent readers never observe a partially written destination.
     private static func installCompletedFile(from tempURL: URL, to destinationURL: URL) throws {
         if FileManager.default.fileExists(atPath: destinationURL.path) {
             _ = try FileManager.default.replaceItemAt(
@@ -563,6 +579,8 @@ public actor AMSMB2Client: SMBClientProtocol {
                 return .unknown(posix.localizedDescription)
             }
         }
+        // Fallback heuristic: AMSMB2 surfaces some libsmb2 failures as plain `NSError`s with only a
+        // localized message, so classify by keyword. Order matters ("timed out" before generic "connect").
         let desc = error.localizedDescription.lowercased()
         if desc.contains("auth") || desc.contains("logon") || desc.contains("credential") || desc.contains("permission") {
             return .badCredentials

@@ -12,6 +12,7 @@ import Foundation
 public final class SharesMediaSource: MediaSource, Sendable {
     public let server: SavedSMBConnection
     public let client: any SMBClientProtocol
+    public let password: String
 
     public var id: String { server.id }
     public var displayName: String { server.displayName }
@@ -20,9 +21,10 @@ public final class SharesMediaSource: MediaSource, Sendable {
 
     private let cursorStore = SharesCursorStore()
 
-    public init(server: SavedSMBConnection, client: any SMBClientProtocol) {
+    public init(server: SavedSMBConnection, client: any SMBClientProtocol, password: String = "") {
         self.server = server
         self.client = client
+        self.password = password
     }
 
     /// Fetches shares (when `folder == nil`) or directory contents on the server using indexed pagination.

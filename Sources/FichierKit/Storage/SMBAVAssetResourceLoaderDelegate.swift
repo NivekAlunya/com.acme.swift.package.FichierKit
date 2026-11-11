@@ -10,6 +10,11 @@ import UniformTypeIdentifiers
 
 /// `AVAssetResourceLoaderDelegate` streaming native video byte ranges on demand from an `SMBClientProtocol`
 /// over the custom `smbstream://` URL scheme without local HTTP loopback sockets or disk buffering.
+///
+/// AVFoundation hands unknown-scheme URLs to this delegate as `AVAssetResourceLoadingRequest`s: first a
+/// content-information request (type, length, range support), then one or more data requests for byte
+/// ranges. Each request is served by a tracked `Task` so AVFoundation cancellations stop the SMB reads.
+/// The delegate must be installed with a serial GCD queue (an AVFoundation API requirement).
 public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelegate, Sendable {
     public static let scheme = "smbstream"
 
@@ -38,6 +43,8 @@ public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAss
         super.init()
     }
 
+    /// Builds a unique `smbstream://` URL. The random name avoids AVFoundation reusing cached
+    /// resources between files; the real extension is kept so AVFoundation can infer the container.
     public static func makeStreamURL(fileName: String) -> URL {
         let ext = (fileName as NSString).pathExtension
         let safeExt = ext.isEmpty ? "mp4" : ext
@@ -57,6 +64,8 @@ public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAss
             return true
         }
 
+        // Answer the content-information request: AVFoundation needs length and byte-range support
+        // before it will issue data requests.
         if let info = loadingRequest.contentInformationRequest {
             let ext = (fileName as NSString).pathExtension.lowercased()
             if let utType = UTType(filenameExtension: ext) {
@@ -75,6 +84,8 @@ public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAss
             return true
         }
 
+        // `currentOffset` (not `requestedOffset`) so a request partially fulfilled earlier resumes
+        // where it stopped. `requestsAllDataToEndOfResource` means "length is unbounded".
         let startOffset = dataRequest.currentOffset
         let remaining = max(0, fileSize - startOffset)
         let requestedCount = dataRequest.requestsAllDataToEndOfResource
@@ -93,8 +104,12 @@ public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAss
         let targetShare = self.share
         let targetPath = self.path
         let targetChunkSize = self.chunkSize
+        // Identify the request by object identity so `didCancel` can find and cancel the matching task.
         let requestID = ObjectIdentifier(loadingRequest)
 
+        // Read in `chunkSize` pieces and feed each to `respond(with:)` so playback can start before
+        // the full range is read. The loop re-checks cancellation after every await; finishing a
+        // request that AVFoundation already cancelled or finished would raise an exception.
         Task {
             await tracker.runTask(for: requestID, isCancelled: loadingRequest.isCancelled) {
                 do {
@@ -162,6 +177,7 @@ public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAss
         return true
     }
 
+    /// Called when AVFoundation abandons a request (seek, teardown). Cancels the matching SMB read task.
     public func resourceLoader(
         _ resourceLoader: AVAssetResourceLoader,
         didCancel loadingRequest: AVAssetResourceLoadingRequest

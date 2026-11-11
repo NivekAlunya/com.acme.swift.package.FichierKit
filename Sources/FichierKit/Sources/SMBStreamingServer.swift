@@ -20,7 +20,11 @@ public actor SMBStreamingServer {
     private var serverPort: UInt16?
     private var startupContinuations: [CheckedContinuation<URL, any Error>] = []
 
+    /// Upper bound for a single `206` response body. Players asking for open-ended ranges
+    /// (`bytes=N-`) receive at most this much and issue a follow-up range request, which keeps
+    /// memory bounded instead of buffering the remainder of a multi-GB file.
     private static let maxChunkSize: Int = 2 * 1024 * 1024
+    /// Read size used when streaming an un-ranged `200 OK` body chunk by chunk over SMB.
     private static let streamChunkSize: Int = 512 * 1024
 
     public init(
@@ -47,12 +51,17 @@ public actor SMBStreamingServer {
             totalSize = (try? await client.fileSize(share: share, path: path)) ?? 0
         }
 
+        // Loopback-only: the server must never be reachable from the network because it serves
+        // unauthenticated access to an SMB file using the user's stored credentials.
         let parameters = NWParameters.tcp
         parameters.requiredInterfaceType = .loopback
 
         let newListener = try NWListener(using: parameters, on: .any)
         self.listener = newListener
 
+        // The listener reports readiness asynchronously on a Network.framework queue. Callers are
+        // parked in `startupContinuations` and resumed from `handleListenerStateUpdate`, or with
+        // `CancellationError` from `stop()`, so every continuation is resumed exactly once.
         return try await withCheckedThrowingContinuation { continuation in
             self.startupContinuations.append(continuation)
 
@@ -70,6 +79,7 @@ public actor SMBStreamingServer {
                 }
             }
 
+            // Network.framework's callback API requires a GCD queue; handlers hop back onto this actor.
             newListener.start(queue: .global(qos: .userInitiated))
         }
     }
@@ -166,6 +176,9 @@ public actor SMBStreamingServer {
                 accumulated.append(content)
             }
 
+            // A request is complete once the header terminator (CRLF CRLF) arrives. Bare LF LF is
+            // accepted too because some clients are lenient. Requests are accumulated across reads
+            // since TCP may split the headers over several segments; 64 KB caps abusive input.
             let headerEnd = Data([0x0D, 0x0A, 0x0D, 0x0A])
             let fallbackEnd = Data([0x0A, 0x0A])
             let hasCompletedHeaders = accumulated.range(of: headerEnd) != nil || accumulated.range(of: fallbackEnd) != nil
@@ -234,6 +247,8 @@ public actor SMBStreamingServer {
             }
 
             let requestedLength = Int(min(end - start + 1, Int64(Int.max)))
+            // Serve a shorter-than-requested range if needed; `Content-Range` below reports the
+            // bytes actually returned, which HTTP clients (AVPlayer, VLC) handle by re-requesting.
             let fetchLength = min(requestedLength, Self.maxChunkSize)
 
             do {
@@ -246,6 +261,7 @@ public actor SMBStreamingServer {
                     sendHTTPResponse(status: "500 Internal Server Error", headers: [:], body: nil, on: connection)
                     return
                 }
+                // The SMB read may return fewer bytes than asked (EOF, short read), so derive the end from the payload.
                 let actualEnd = start + Int64(payload.count) - 1
                 let headers: [String: String] = [
                     "Content-Type": contentType,
@@ -284,6 +300,9 @@ public actor SMBStreamingServer {
     private func streamFullBody(from startOffset: Int64, totalSize: Int64, on connection: NWConnection) async {
         var currentOffset = startOffset
 
+        // Each iteration reads one chunk and awaits the socket flush before the next read, giving
+        // natural back-pressure so a slow player never makes us buffer the whole file in memory.
+        // Aborts as soon as the player closes the connection (e.g. seeks elsewhere).
         while currentOffset < totalSize {
             if Task.isCancelled || !isConnectionActive(connection) {
                 connection.cancel()
