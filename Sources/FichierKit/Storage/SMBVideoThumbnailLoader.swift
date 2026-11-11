@@ -13,8 +13,8 @@ import UIKit
 /// Actor-isolated video thumbnail generator and bounded in-memory `NSCache` for `FichierKit` media items.
 ///
 /// Generates frame thumbnails for both native (`AVAssetImageGenerator` via direct `smbstream://`
-/// `AVAssetResourceLoaderDelegate` or local file URLs) and extended (`VLCKit` via `SMBStreamingServer`)
-/// containers, while strictly respecting tvOS memory constraints and cooperative task cancellation.
+/// `AVAssetResourceLoaderDelegate` or local file URLs) and extended (`VLCKit` via direct `smb://` URLs
+/// and credentials) containers, while strictly respecting tvOS memory constraints and cooperative task cancellation.
 public actor SMBVideoThumbnailLoader {
     public static let shared = SMBVideoThumbnailLoader()
 
@@ -171,6 +171,8 @@ public actor SMBVideoThumbnailLoader {
 
             return await Self.extractSMBFrame(
                 client: sharesSource.client,
+                server: sharesSource.server,
+                password: sharesSource.password,
                 share: share,
                 path: path,
                 fileName: fileName,
@@ -186,6 +188,8 @@ public actor SMBVideoThumbnailLoader {
     /// (MKV, AVI, WebM, ...) use the reverse order. Callers own caching and concurrency policy.
     public nonisolated static func extractSMBFrame(
         client: any SMBClientProtocol,
+        server: SavedSMBConnection? = nil,
+        password: String = "",
         share: String,
         path: String,
         fileName: String,
@@ -202,14 +206,14 @@ public actor SMBVideoThumbnailLoader {
                 return nativeImage
             }
             guard !Task.isCancelled else { return nil }
-            return await extractWithSMBStreamingServer(
-                client: client, share: share, path: path, fileName: fileName,
-                fileSize: fileSize, maxDimension: maxDimension, preferVLC: true
+            return await extractWithDirectSMBVLC(
+                server: server, password: password, share: share, path: path,
+                maxDimension: maxDimension
             )
         }
-        if let extendedImage = await extractWithSMBStreamingServer(
-            client: client, share: share, path: path, fileName: fileName,
-            fileSize: fileSize, maxDimension: maxDimension, preferVLC: true
+        if let extendedImage = await extractWithDirectSMBVLC(
+            server: server, password: password, share: share, path: path,
+            maxDimension: maxDimension
         ) {
             return extendedImage
         }
@@ -304,46 +308,28 @@ public actor SMBVideoThumbnailLoader {
         return result
     }
 
-    private nonisolated static func extractWithSMBStreamingServer(
-        client: any SMBClientProtocol,
+    private nonisolated static func extractWithDirectSMBVLC(
+        server: SavedSMBConnection?,
+        password: String,
         share: String,
         path: String,
-        fileName: String,
-        fileSize: Int64,
-        maxDimension: CGFloat,
-        preferVLC: Bool
+        maxDimension: CGFloat
     ) async -> UIImage? {
-        guard !Task.isCancelled else { return nil }
-
-        let server = SMBStreamingServer(
-            client: client,
+        guard !Task.isCancelled, let server else { return nil }
+        guard let smbURL = VLCPlaybackOptions.makeSMBURL(
+            host: server.host,
             share: share,
-            path: path,
-            fileName: fileName,
-            totalSize: fileSize
-        )
-
-        do {
-            let streamURL = try await server.start()
-            if Task.isCancelled {
-                await server.stop()
-                return nil
-            }
-
-            let image: UIImage?
-            if preferVLC {
-                image = await extractWithVLC(from: streamURL, maxDimension: maxDimension)
-            } else {
-                let asset = AVURLAsset(url: streamURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
-                image = await extractWithAVFoundation(asset: asset, maxDimension: maxDimension, timeoutSeconds: 10.0)
-            }
-
-            await server.stop()
-            return image
-        } catch {
-            await server.stop()
+            relativePath: path
+        ) else {
             return nil
         }
+
+        let options = VLCPlaybackOptions(
+            username: server.username,
+            password: password
+        )
+
+        return await extractWithVLC(from: smbURL, maxDimension: maxDimension, options: options)
     }
 
     private nonisolated static func extractWithAVFoundation(
@@ -424,7 +410,8 @@ public actor SMBVideoThumbnailLoader {
 
     private nonisolated static func extractWithVLC(
         from url: URL,
-        maxDimension: CGFloat
+        maxDimension: CGFloat,
+        options: VLCPlaybackOptions? = nil
     ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
 
@@ -432,7 +419,8 @@ public actor SMBVideoThumbnailLoader {
             from: url,
             maxDimension: maxDimension,
             snapshotPosition: 0.05,
-            timeoutSeconds: 10.0
+            timeoutSeconds: 10.0,
+            options: options
         ) {
             return thumb
         }
@@ -443,7 +431,8 @@ public actor SMBVideoThumbnailLoader {
             from: url,
             maxDimension: maxDimension,
             snapshotPosition: 0.0,
-            timeoutSeconds: 8.0
+            timeoutSeconds: 8.0,
+            options: options
         )
     }
     #else

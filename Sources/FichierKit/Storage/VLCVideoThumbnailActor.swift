@@ -26,17 +26,20 @@ public actor VLCVideoThumbnailActor {
     /// Extracts a video thumbnail frame using `VLCKit`'s `VLCMediaThumbnailer`.
     ///
     /// - Parameters:
-    ///   - url: Local file URL or `SMBStreamingServer` loopback HTTP URL.
+    ///   - url: Local file URL, network URL, or direct `smb://` URL.
     ///   - maxDimension: Maximum pixel bounding box dimension.
     ///   - snapshotPosition: Relative timeline position (`0.0` probes timestamp 0 explicitly).
     ///   - timeoutSeconds: Watchdog timeout ceiling in seconds.
+    ///   - snapshotTimeSeconds: Optional absolute timestamp in seconds to seek to.
+    ///   - options: Optional LibVLC media options (e.g. SMB credentials and caching flags).
     /// - Returns: Rendered `UIImage` frame, or `nil` on failure, timeout, or cancellation.
     public func generateThumbnail(
         from url: URL,
         maxDimension: CGFloat = 520,
         snapshotPosition: Float = 0.05,
         timeoutSeconds: Double = 6.0,
-        snapshotTimeSeconds: Double? = nil
+        snapshotTimeSeconds: Double? = nil,
+        options: VLCPlaybackOptions? = nil
     ) async -> UIImage? {
         #if canImport(VLCKit)
         guard !Task.isCancelled else { return nil }
@@ -48,7 +51,8 @@ public actor VLCVideoThumbnailActor {
                 maxDimension: maxDimension,
                 snapshotPosition: snapshotPosition,
                 timeoutSeconds: timeoutSeconds,
-                snapshotTimeSeconds: snapshotTimeSeconds
+                snapshotTimeSeconds: snapshotTimeSeconds,
+                options: options
             )
         }
         #else
@@ -61,7 +65,8 @@ public actor VLCVideoThumbnailActor {
         maxDimension: CGFloat,
         snapshotPosition: Float,
         timeoutSeconds: Double,
-        snapshotTimeSeconds: Double?
+        snapshotTimeSeconds: Double?,
+        options: VLCPlaybackOptions?
     ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
 
@@ -86,7 +91,8 @@ public actor VLCVideoThumbnailActor {
                         with: url,
                         maxDimension: maxDimension,
                         snapshotPosition: snapshotPosition,
-                        snapshotTimeSeconds: snapshotTimeSeconds
+                        snapshotTimeSeconds: snapshotTimeSeconds,
+                        options: options
                     )
                 }
 
@@ -132,7 +138,8 @@ public actor VLCVideoThumbnailActor {
         maxDimension: CGFloat = 520,
         snapshotPosition: Float = 0.05,
         timeoutSeconds: Double = 6.0,
-        snapshotTimeSeconds: Double? = nil
+        snapshotTimeSeconds: Double? = nil,
+        options: VLCPlaybackOptions? = nil
     ) async -> Any? {
         nil
     }

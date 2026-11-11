@@ -40,7 +40,7 @@ struct SMBVideoThumbnailTests {
         #expect(cachedImage != nil)
     }
 
-    @Test("Generates video thumbnail over SMBStreamingServer from SMB video file")
+    @Test("Generates video thumbnail from SMB video file")
     func testSMBVideoThumbnailGenerationOverLoopback() async throws {
         let tempVideoURL = try await VideoTestFixtureGenerator.createSampleMP4File()
         defer { try? FileManager.default.removeItem(at: tempVideoURL) }
@@ -80,32 +80,6 @@ struct SMBVideoThumbnailTests {
         )
         let resolvedZeroImage = try #require(zeroSizeThumb)
         #expect(resolvedZeroImage.size.width > 0)
-    }
-
-    @Test("SMBStreamingServer serves HTTP 200 OK with full streamed payload for unranged GET exceeding chunk size")
-    func testStreamingServerUnrangedGET() async throws {
-        let payloadSize = (1200 * 1024) + 137 // > 2 x 512 KB chunks
-        let expectedBytes = Data((0..<payloadSize).map { UInt8($0 & 0xFF) })
-        let client = MockSMBClient(
-            mockShares: ["Movies"],
-            mockFileData: ["Movies/large.bin": expectedBytes]
-        )
-
-        let server = SMBStreamingServer(
-            client: client,
-            share: "Movies",
-            path: "large.bin",
-            fileName: "large.bin",
-            totalSize: Int64(expectedBytes.count)
-        )
-        let streamURL = try await server.start()
-
-        let (data, response) = try await URLSession.shared.data(from: streamURL)
-        await server.stop()
-
-        let http = try #require(response as? HTTPURLResponse)
-        #expect(http.statusCode == 200)
-        #expect(data == expectedBytes)
     }
 
     @Test("Concurrent mixed image and video thumbnail loads do not starve SMB video extraction")
@@ -151,52 +125,6 @@ struct SMBVideoThumbnailTests {
         #expect(results.3 != nil)
         #expect(results.4 != nil)
         #expect(results.5 != nil)
-    }
-
-    @Test("VLCVideoThumbnailActor extracts frame from extended video streamed over SMBStreamingServer")
-    func testVLCVideoThumbnailExtractionOverLoopback() async throws {
-        let tempVideoURL = try await VideoTestFixtureGenerator.createSampleMP4File()
-        defer { try? FileManager.default.removeItem(at: tempVideoURL) }
-
-        let mp4Data = try Data(contentsOf: tempVideoURL)
-        let server = SavedSMBConnection(host: "192.168.1.51", username: "kevin", lastConnected: Date())
-        let client = MockSMBClient(mockShares: ["Movies"], mockFileData: ["Movies/clip.mkv": mp4Data])
-        let sharesSource = SharesMediaSource(server: server, client: client)
-
-        let resolver = DefaultMediaSourceResolver()
-        await resolver.register(source: sharesSource)
-
-        let streamServer = SMBStreamingServer(
-            client: client,
-            share: "Movies",
-            path: "clip.mkv",
-            fileName: "clip.mkv",
-            totalSize: Int64(mp4Data.count)
-        )
-        let streamURL = try await streamServer.start()
-        let vlcThumb = await VLCVideoThumbnailActor.shared.generateThumbnail(
-            from: streamURL,
-            maxDimension: 560,
-            snapshotPosition: 0.0,
-            timeoutSeconds: 8.0
-        )
-        await streamServer.stop()
-
-        let directImage = try #require(vlcThumb)
-        #expect(directImage.size.width > 0)
-
-        let loader = SMBVideoThumbnailLoader()
-        let loaderThumb = await loader.loadThumbnail(
-            sourceID: server.id,
-            share: "Movies",
-            path: "clip.mkv",
-            fileName: "clip.mkv",
-            fileSize: Int64(mp4Data.count),
-            targetSize: CGSize(width: 380, height: 260),
-            resolver: resolver
-        )
-        let resolvedImage = try #require(loaderThumb)
-        #expect(resolvedImage.size.height > 0)
     }
 
     @Test("Loads downsampled local image thumbnail")

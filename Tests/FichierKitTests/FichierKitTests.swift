@@ -326,31 +326,6 @@ struct FichierKitTests {
         #expect(!discovery.isScanning)
     }
 
-    @Test("Verify SMBStreamingServer Serves Loopback Byte Ranges")
-    func testSMBStreamingServerLoopbackRange() async throws {
-        let payload = Data("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".utf8)
-        let client = MockSMBClient(mockFileData: ["Media/sample.mkv": payload])
-        let server = SMBStreamingServer(
-            client: client,
-            share: "Media",
-            path: "sample.mkv",
-            fileName: "sample.mkv",
-            totalSize: Int64(payload.count)
-        )
-
-        let streamURL = try await server.start()
-
-        var request = URLRequest(url: streamURL)
-        request.setValue("bytes=10-15", forHTTPHeaderField: "Range")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        await server.stop()
-
-        let httpResponse = try #require(response as? HTTPURLResponse)
-
-        #expect(httpResponse.statusCode == 206)
-        #expect(String(decoding: data, as: UTF8.self) == "ABCDEF")
-    }
-
     @Test("Verify TVVLCPlayerEngine Initial and Seek State")
     @MainActor
     func testTVVLCPlayerEngineInitialAndSeekState() {

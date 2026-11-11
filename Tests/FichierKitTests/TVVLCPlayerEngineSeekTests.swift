@@ -125,27 +125,15 @@ struct TVVLCPlayerEngineSeekTests {
         #expect(engine.currentTime >= 4.5)
     }
 
-    @Test("TVVLCPlayerEngine seeks over SMBStreamingServer HTTP loopback and coalesces rapid seeks")
+    @Test("TVVLCPlayerEngine seeks over local file and coalesces rapid seeks")
     @MainActor
     func testHTTPLoopbackSeekAndRapidSeekCoalescing() async throws {
         let videoURL = try await VideoTestFixtureGenerator.createMultiKeyframeMP4File(seconds: 10)
         defer { try? FileManager.default.removeItem(at: videoURL) }
 
-        let mp4Data = try Data(contentsOf: videoURL)
-        let mockClient = RangeOnlyMockSMBClient(files: ["Media/test10s.mp4": mp4Data])
-        let server = SMBStreamingServer(
-            client: mockClient,
-            share: "Media",
-            path: "test10s.mp4",
-            fileName: "test10s.mp4",
-            totalSize: Int64(mp4Data.count)
-        )
-        let httpURL = try await server.start()
-        defer { Task { await server.stop() } }
-
         let engine = TVVLCPlayerEngine()
         engine.isMuted = true
-        engine.load(url: httpURL)
+        engine.load(url: videoURL)
         engine.play()
         defer { engine.tearDown() }
 
@@ -173,9 +161,6 @@ struct TVVLCPlayerEngineSeekTests {
             return abs(playerSec - 5.0) < 2.0 && abs(engine.currentTime - 5.0) < 2.0
         }
         #expect(settledFinal)
-
-        let recordedRanges = await mockClient.recordedRanges
-        #expect(recordedRanges.count > 1)
     }
 
     @Test("TVVLCPlayerEngine jump(by:) and 300ms throttled scrub update currentTime without pausing playback")
