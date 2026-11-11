@@ -336,24 +336,13 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         }
     }
 
-    /// Jumps forward or backward by `deltaSeconds` using `VLCMediaPlayer.jumpForward` / `jumpBackward`.
+    /// Jumps forward or backward by `deltaSeconds`, delegating to `seek(to:precision:)` for bounds clamping and pending seek fallbacks.
     public func jump(by deltaSeconds: Double) {
         guard deltaSeconds.isFinite, deltaSeconds != 0 else { return }
         let target = duration > 0
             ? min(max(0, currentTime + deltaSeconds), duration)
             : max(0, currentTime + deltaSeconds)
-        currentTime = target
-        if duration > 0 {
-            playbackPosition = min(max(target / duration, 0.0), 1.0)
-        }
-        #if canImport(VLCKit)
-        guard mediaPlayer.media != nil else { return }
-        if deltaSeconds > 0 {
-            mediaPlayer.jumpForward(deltaSeconds)
-        } else {
-            mediaPlayer.jumpBackward(abs(deltaSeconds))
-        }
-        #endif
+        seek(to: target, precision: .fast)
     }
 
     /// Selects a chapter by index using `VLCMediaPlayer.currentChapterIndex`.
@@ -370,7 +359,7 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         #if canImport(VLCKit)
         guard mediaPlayer.media != nil else { return }
         let count = mediaPlayer.numberOfChapters(forTitle: mediaPlayer.currentTitleIndex)
-        if count <= 0 || index < Int(count) {
+        if count > 0 && index < Int(count) {
             mediaPlayer.currentChapterIndex = Int32(index)
         }
         #endif
