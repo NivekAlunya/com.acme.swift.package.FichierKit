@@ -169,54 +169,55 @@ public actor SMBVideoThumbnailLoader {
                 return nil
             }
 
-            if !SupportedMediaTypes.isExtendedVideo(extension: fileExtension) {
-                if let nativeImage = await Self.extractWithSMBAVFoundation(
-                    client: sharesSource.client,
-                    share: share,
-                    path: path,
-                    fileName: fileName,
-                    fileSize: resolvedSize,
-                    maxDimension: maxDimension,
-                    timeoutSeconds: 12.0
-                ) {
-                    return nativeImage
-                }
-
-                guard !Task.isCancelled else { return nil }
-                return await Self.extractWithSMBStreamingServer(
-                    client: sharesSource.client,
-                    share: share,
-                    path: path,
-                    fileName: fileName,
-                    fileSize: resolvedSize,
-                    maxDimension: maxDimension,
-                    preferVLC: true
-                )
-            } else {
-                if let extendedImage = await Self.extractWithSMBStreamingServer(
-                    client: sharesSource.client,
-                    share: share,
-                    path: path,
-                    fileName: fileName,
-                    fileSize: resolvedSize,
-                    maxDimension: maxDimension,
-                    preferVLC: true
-                ) {
-                    return extendedImage
-                }
-
-                guard !Task.isCancelled else { return nil }
-                return await Self.extractWithSMBAVFoundation(
-                    client: sharesSource.client,
-                    share: share,
-                    path: path,
-                    fileName: fileName,
-                    fileSize: resolvedSize,
-                    maxDimension: maxDimension,
-                    timeoutSeconds: 8.0
-                )
-            }
+            return await Self.extractSMBFrame(
+                client: sharesSource.client,
+                share: share,
+                path: path,
+                fileName: fileName,
+                fileSize: resolvedSize,
+                maxDimension: maxDimension
+            )
         }
+    }
+
+    /// Extracts a representative frame from a remote SMB video, bypassing cache and concurrency limiting.
+    ///
+    /// Native containers try `AVFoundation` first and fall back to `VLCKit`; extended containers
+    /// (MKV, AVI, WebM, ...) use the reverse order. Callers own caching and concurrency policy.
+    public nonisolated static func extractSMBFrame(
+        client: any SMBClientProtocol,
+        share: String,
+        path: String,
+        fileName: String,
+        fileSize: Int64,
+        maxDimension: CGFloat = standardMaxDimension
+    ) async -> UIImage? {
+        guard fileSize > 0, !Task.isCancelled else { return nil }
+        let ext = fileExtension(fileName: fileName, fallbackPath: path)
+        if !SupportedMediaTypes.isExtendedVideo(extension: ext) {
+            if let nativeImage = await extractWithSMBAVFoundation(
+                client: client, share: share, path: path, fileName: fileName,
+                fileSize: fileSize, maxDimension: maxDimension, timeoutSeconds: 12.0
+            ) {
+                return nativeImage
+            }
+            guard !Task.isCancelled else { return nil }
+            return await extractWithSMBStreamingServer(
+                client: client, share: share, path: path, fileName: fileName,
+                fileSize: fileSize, maxDimension: maxDimension, preferVLC: true
+            )
+        }
+        if let extendedImage = await extractWithSMBStreamingServer(
+            client: client, share: share, path: path, fileName: fileName,
+            fileSize: fileSize, maxDimension: maxDimension, preferVLC: true
+        ) {
+            return extendedImage
+        }
+        guard !Task.isCancelled else { return nil }
+        return await extractWithSMBAVFoundation(
+            client: client, share: share, path: path, fileName: fileName,
+            fileSize: fileSize, maxDimension: maxDimension, timeoutSeconds: 8.0
+        )
     }
 
     // MARK: - Frame Extraction Pipeline

@@ -92,9 +92,9 @@ public actor PhotoVideoLoader {
                     return
                 }
 
-                nonisolated(unsafe) let exportSession = exporter
+                let box = PhotoExportSessionBox(session: exporter)
                 continuation.yield {
-                    try await exportSession.export(to: tempExportURL, as: .mov)
+                    try await box.session.export(to: tempExportURL, as: .mov)
                     return tempExportURL
                 }
                 continuation.finish()
