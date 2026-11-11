@@ -48,6 +48,10 @@ public actor PhotoVideoLoader {
 
         let tempExportURL = exportDirectory.appendingPathComponent("ph_export_\(UUID().uuidString).mov")
 
+        // PhotoKit delivers the asset through a callback (possibly several times: a degraded preview
+        // first, then the final asset). The stream bridges that callback to async/await and yields a
+        // *deferred resolver* closure, so the potentially long export runs in the caller's task
+        // (cancellable) rather than inside the PhotoKit callback.
         let stream = AsyncThrowingStream<@Sendable () async throws -> URL, any Error> { continuation in
             let requestID = PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, info in
                 let isCancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
@@ -61,6 +65,8 @@ public actor PhotoVideoLoader {
                     return
                 }
 
+                // Plain video files are file-backed and can be played in place with no export.
+                // Compositions (Slow-Mo, edited clips) have no single file and must be exported.
                 if let urlAsset = avAsset as? AVURLAsset {
                     let directURL = urlAsset.url
                     continuation.yield { directURL }
@@ -69,6 +75,7 @@ public actor PhotoVideoLoader {
                 }
 
                 guard let avAsset else {
+                    // A nil asset with the "degraded" flag is an intermediate callback; wait for the final one.
                     let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                     if !isDegraded {
                         continuation.finish(throwing: NSError(

@@ -281,6 +281,8 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         let clamped = duration > 0 ? max(0, min(seconds, duration)) : max(0, seconds)
         currentTime = clamped
 
+        // Once the duration is known, seek by normalized position (0...1), which VLC handles
+        // reliably even for non-indexed containers. Before that, fall back to an absolute time seek.
         if duration > 0 {
             let clampedPosition = min(max(clamped / duration, 0.0), 1.0)
             playbackPosition = clampedPosition
@@ -294,6 +296,8 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
 
         #if canImport(VLCKit)
         guard mediaPlayer.media != nil else { return }
+        // Seeking before VLC reports the stream as seekable is silently ignored, so the target is
+        // parked in `pendingSeekSeconds` and replayed from the time-changed / playing callbacks.
         if mediaPlayer.isSeekable {
             let targetMs = Int32(clamping: Int64(clamped * 1000.0))
             mediaPlayer.time = VLCTime(int: targetMs)
@@ -310,6 +314,8 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         toleranceAfter: Double,
         completion: (@MainActor @Sendable (Bool) -> Void)?
     ) {
+        // VLC has no AVPlayer-style tolerances, so map them to coarse precision: zero tolerance is
+        // exact, infinite or >= 5 s is "fast" (keyframe seek), anything else lets VLC choose.
         let precision: PlayerSeekPrecision
         if toleranceBefore == 0 && toleranceAfter == 0 {
             precision = .exact
@@ -376,6 +382,8 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
             playbackPosition = min(max(clamped / duration, 0.0), 1.0)
         }
 
+        // Leading-edge throttle: UI state updates on every call, but only one VLC seek is issued per
+        // 300 ms window. Flooding LibVLC with seeks while scrubbing makes it stall or drop frames.
         guard scrubThrottleTask == nil else { return }
         scrubThrottleTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
@@ -582,6 +590,9 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
 }
 
 #if canImport(VLCKit)
+// VLCKit calls these delegate methods on its own internal threads, hence `nonisolated`. Each one
+// hops onto the main actor and re-checks `mediaPlayer.media != nil`, because a callback queued
+// before `stop()`/teardown can arrive after the media was released.
 extension TVVLCPlayerEngine: VLCMediaPlayerDelegate {
     public nonisolated func mediaPlayerTimeChanged(_ aNotification: Notification) {
         Task { @MainActor [weak self] in
@@ -595,6 +606,7 @@ extension TVVLCPlayerEngine: VLCMediaPlayerDelegate {
                 }
             }
 
+            // While scrubbing, the UI owns currentTime/position; applying VLC's (stale) values would make the scrubber jump back.
             if !self.isScrubbing {
                 let ms = Double(self.mediaPlayer.time.intValue)
                 let seconds = ms / 1000.0
@@ -640,6 +652,8 @@ extension TVVLCPlayerEngine: VLCMediaPlayerDelegate {
 
     public nonisolated func mediaPlayerBufferingChanged(_ progress: Float) {
         Task { @MainActor [weak self] in
+            // Ignore buffering events after an explicit stop or terminal failure so they cannot
+            // overwrite the final state with `.buffering`/`.playing`.
             guard let self, self.mediaPlayer.media != nil, !self.isExplicitStop, !self.hasReportedTerminalFailure else { return }
             if progress < 1.0 {
                 if self.playbackState != .paused && !self.mediaPlayer.isPlaying {
@@ -693,6 +707,7 @@ extension TVVLCPlayerEngine: VLCMediaPlayerDelegate {
                 self.didStartPlayback = true
                 self.didEmitPlaybackEnded = false
                 self.playbackState = .playing
+                // VLC resets rate, volume and mute when (re)starting playback, so re-apply the user's settings.
                 if self.playbackRate != 1.0 {
                     self.mediaPlayer.rate = self.playbackRate
                 }
