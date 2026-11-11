@@ -65,6 +65,12 @@ public actor PhotoVideoLoader {
                     return
                 }
 
+                // If PhotoKit passes an intermediate degraded callback, wait for the full-quality asset.
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+                if isDegraded {
+                    return
+                }
+
                 // Plain video files are file-backed and can be played in place with no export.
                 // Compositions (Slow-Mo, edited clips) have no single file and must be exported.
                 if let urlAsset = avAsset as? AVURLAsset {
@@ -75,15 +81,11 @@ public actor PhotoVideoLoader {
                 }
 
                 guard let avAsset else {
-                    // A nil asset with the "degraded" flag is an intermediate callback; wait for the final one.
-                    let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-                    if !isDegraded {
-                        continuation.finish(throwing: NSError(
-                            domain: "PhotoVideoLoader",
-                            code: 2,
-                            userInfo: [NSLocalizedDescriptionKey: "Unable to load video asset from Photos library."]
-                        ))
-                    }
+                    continuation.finish(throwing: NSError(
+                        domain: "PhotoVideoLoader",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Unable to load video asset from Photos library."]
+                    ))
                     return
                 }
 

@@ -288,8 +288,12 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
             playbackPosition = clampedPosition
             #if canImport(VLCKit)
             guard mediaPlayer.media != nil else { return }
-            mediaPlayer.position = Double(clampedPosition)
-            pendingSeekSeconds = nil
+            if mediaPlayer.isSeekable {
+                mediaPlayer.position = Double(clampedPosition)
+                pendingSeekSeconds = nil
+            } else {
+                pendingSeekSeconds = clamped
+            }
             #endif
             return
         }
@@ -382,9 +386,11 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
             playbackPosition = min(max(clamped / duration, 0.0), 1.0)
         }
 
-        // Leading-edge throttle: UI state updates on every call, but only one VLC seek is issued per
-        // 300 ms window. Flooding LibVLC with seeks while scrubbing makes it stall or drop frames.
+        // Leading-edge throttle: seek immediately on the first touch for instantaneous responsiveness,
+        // then throttle follow-up scrubbing events so LibVLC is not flooded.
         guard scrubThrottleTask == nil else { return }
+        seek(to: currentTime, precision: .fast)
+
         scrubThrottleTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
             guard let self, !Task.isCancelled else { return }
