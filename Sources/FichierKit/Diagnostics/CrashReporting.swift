@@ -54,11 +54,9 @@ public nonisolated enum CrashReporting {
         #endif
     }
 
-    #if DEBUG
-
-    /// Regular expression detecting credentials embedded in URI schemes (e.g. `smb://user:password@host` or `http://user:password@host`).
+    /// Regular expression detecting credentials embedded in URI schemes (e.g. `smb://user:password@host`, `smb://DOMAIN;user:password@host`, or `http://user:password@host`).
     private static let credentialURIRegex: NSRegularExpression = {
-        let pattern = #"([a-zA-Z][a-zA-Z0-9+.-]*://[^:\s/@]+):([^@\s/]+)@"#
+        let pattern = #"([a-zA-Z][a-zA-Z0-9+.-]*://[^:\s/]+?):([^@\s/]+)@"#
         do {
             return try NSRegularExpression(pattern: pattern)
         } catch {
@@ -78,6 +76,8 @@ public nonisolated enum CrashReporting {
             withTemplate: "$1:***@"
         )
     }
+
+    #if DEBUG
 
     /// Builds the shareable text for a crash, with all embedded credentials redacted.
     ///

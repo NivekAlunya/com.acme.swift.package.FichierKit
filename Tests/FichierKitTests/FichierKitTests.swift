@@ -1024,4 +1024,43 @@ struct FichierKitTests {
         #expect(requests[4].cursor == "10")
         #expect(requests[5].path == "B")
     }
+
+    @Test("CrashReporting redactCredentials properly sanitizes domain and non-domain URLs")
+    func testCrashReportingRedactCredentials() {
+        let standardSMB = "smb://alice:secret123@nas.local/share"
+        #expect(CrashReporting.redactCredentials(in: standardSMB) == "smb://alice:***@nas.local/share")
+
+        let domainSemicolon = "smb://WORKGROUP;alice:mySecretPass@server.internal/media"
+        #expect(CrashReporting.redactCredentials(in: domainSemicolon) == "smb://WORKGROUP;alice:***@server.internal/media")
+
+        let domainBackslash = "smb://CORP\\bob:hunter2@192.168.1.100/data"
+        #expect(CrashReporting.redactCredentials(in: domainBackslash) == "smb://CORP\\bob:***@192.168.1.100/data")
+
+        let httpURL = "https://admin:token456@example.com/api"
+        #expect(CrashReporting.redactCredentials(in: httpURL) == "https://admin:***@example.com/api")
+    }
+
+    @Test("CrashReportStore atomic creation and suffix rotation under collision")
+    func testCrashReportStoreAtomicArchive() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appending(path: "crash_store_test_\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let store = CrashReportStore(directoryURL: tempDir)
+        let fixedDate = Date(timeIntervalSince1970: 1700000000)
+
+        let url1 = try store.archive("Report 1", date: fixedDate)
+        let url2 = try store.archive("Report 2", date: fixedDate)
+        let url3 = try store.archive("Report 3", date: fixedDate)
+
+        #expect(url1 != url2)
+        #expect(url2 != url3)
+        #expect(url1.lastPathComponent.contains(".crash"))
+        #expect(url2.lastPathComponent.contains("_001.crash"))
+        #expect(url3.lastPathComponent.contains("_002.crash"))
+
+        let content1 = try String(contentsOf: url1, encoding: .utf8)
+        let content2 = try String(contentsOf: url2, encoding: .utf8)
+        #expect(content1 == "Report 1")
+        #expect(content2 == "Report 2")
+    }
 }

@@ -51,20 +51,42 @@ public nonisolated struct CrashReportStore: Sendable {
         let stamp = date.formatted(
             .iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted)
         )
-        var url = directoryURL.appending(path: "\(Self.filePrefix)\(stamp).\(Self.fileExtension)")
         // Two crashes within the same second must not overwrite each other.
         // Suffixes are formatted with 3-digit zero-padding (_001, _002, ...) so lexicographical
         // descending sorting preserves true chronological order across single and multi-digit collision numbers.
-        var suffix = 1
-        while FileManager.default.fileExists(atPath: url.path) {
-            let suffixString = String(format: "%03d", suffix)
-            url = directoryURL.appending(path: "\(Self.filePrefix)\(stamp)_\(suffixString).\(Self.fileExtension)")
-            suffix += 1
-        }
+        // POSIX open with O_CREAT | O_EXCL eliminates TOCTOU races when multiple threads archive simultaneously.
+        var suffix = 0
+        while true {
+            let candidateURL: URL
+            if suffix == 0 {
+                candidateURL = directoryURL.appending(path: "\(Self.filePrefix)\(stamp).\(Self.fileExtension)")
+            } else {
+                let suffixString = String(format: "%03d", suffix)
+                candidateURL = directoryURL.appending(path: "\(Self.filePrefix)\(stamp)_\(suffixString).\(Self.fileExtension)")
+            }
 
-        try text.write(to: url, atomically: true, encoding: .utf8)
-        pruneOldReports()
-        return url
+            let path = candidateURL.path
+            let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+            if fd >= 0 {
+                // Successfully acquired exclusive file handle
+                let data = Array(text.utf8)
+                let written = data.withUnsafeBufferPointer { buf in
+                    buf.baseAddress.map { write(fd, $0, buf.count) } ?? 0
+                }
+                close(fd)
+                if written < 0 {
+                    try? FileManager.default.removeItem(at: candidateURL)
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                pruneOldReports()
+                return candidateURL
+            } else if errno == EEXIST {
+                // Collision; try next sequence suffix
+                suffix += 1
+            } else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
     }
 
     /// The most recently archived report, or `nil` when none exists.
