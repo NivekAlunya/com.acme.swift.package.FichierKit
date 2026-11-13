@@ -17,15 +17,15 @@ public enum SMBError: LocalizedError, Sendable, Equatable {
     public var errorDescription: String? {
         switch self {
         case .unreachable(let host):
-            return "Server '\(host)' is unreachable. Please verify that the server is powered on and connected to the local network."
+            return String(localized: .smbErrorUnreachable(host))
         case .badCredentials:
-            return "Authentication failed. The username or password provided is incorrect."
+            return String(localized: .smbErrorBadCredentials)
         case .timeout:
-            return "Connection timed out. The server took too long to respond."
+            return String(localized: .smbErrorTimeout)
         case .noShares:
-            return "No shared folders were found on this server."
+            return String(localized: .smbErrorNoShares)
         case .shareNotFound(let share):
-            return "Share '\(share)' was not found on this server."
+            return String(localized: .smbErrorShareNotFound(share))
         case .unknown(let message):
             return message
         }

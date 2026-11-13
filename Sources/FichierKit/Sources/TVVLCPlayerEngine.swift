@@ -476,7 +476,7 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
             } else if !rawDesc.isEmpty {
                 title = rawDesc
             } else {
-                title = "Audio Track \(idx + 1)"
+                title = String(localized: .playerFallbackAudioTrack(idx + 1))
             }
             let trackID = vlcTrack.trackId.isEmpty ? "vlc_audio_\(idx)" : vlcTrack.trackId
             let track = PlayerAudioTrack(id: trackID, title: title, languageCode: vlcTrack.language)
@@ -501,7 +501,7 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
             } else if !rawDesc.isEmpty {
                 title = rawDesc
             } else {
-                title = "Subtitle Track \(idx + 1)"
+                title = String(localized: .playerFallbackSubtitleTrack(idx + 1))
             }
             let trackID = vlcTrack.trackId.isEmpty ? "vlc_sub_\(idx)" : vlcTrack.trackId
             let track = PlayerSubtitleTrack(id: trackID, title: title, languageCode: vlcTrack.language)
@@ -567,7 +567,7 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
             let startSec = max(0, Double(desc.timeOffset.intValue) / 1000.0)
             let durSec = max(0, Double(desc.durationTime.intValue) / 1000.0)
             let trimmed = (desc.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let title = trimmed.isEmpty ? "Chapter \(idx + 1)" : trimmed
+            let title = trimmed.isEmpty ? String(localized: .playerFallbackChapter(idx + 1)) : trimmed
             nextChapters.append(
                 PlayerChapter(
                     id: "vlc_ch_\(desc.titleIndex)_\(desc.chapterIndex)_\(idx)",
@@ -739,7 +739,7 @@ extension TVVLCPlayerEngine: VLCMediaPlayerDelegate {
                 guard !self.hasReportedTerminalFailure else { return }
                 self.hasReportedTerminalFailure = true
                 self.didStartPlayback = false
-                let message = "VLC playback error."
+                let message = String(localized: .playerVlcPlaybackError)
                 self.playbackState = .failed(message)
                 self.onError?(NSError(
                     domain: "TVVLCPlayerEngine",

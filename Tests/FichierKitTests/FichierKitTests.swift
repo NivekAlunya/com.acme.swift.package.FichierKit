@@ -77,6 +77,7 @@ struct FichierKitTests {
     @Test("Verify SMBError Descriptions")
     func testSMBErrorDescriptions() {
         let unreachable = SMBError.unreachable("192.168.1.50")
+        #expect(unreachable.errorDescription?.contains("192.168.1.50") == true)
         #expect(unreachable.errorDescription?.contains("unreachable") == true)
 
         let badCreds = SMBError.badCredentials
@@ -84,6 +85,24 @@ struct FichierKitTests {
 
         let timeout = SMBError.timeout
         #expect(timeout.errorDescription?.contains("timed out") == true)
+
+        let noShares = SMBError.noShares
+        #expect(noShares.errorDescription?.contains("No shared folders") == true)
+
+        let shareNotFound = SMBError.shareNotFound("MediaShare")
+        #expect(shareNotFound.errorDescription?.contains("MediaShare") == true)
+        #expect(shareNotFound.errorDescription?.contains("not found") == true)
+
+        let unknown = SMBError.unknown("Custom internal error")
+        #expect(unknown.errorDescription == "Custom internal error")
+    }
+
+    @Test("Verify MediaSortKey Localized Display Titles")
+    func testMediaSortKeyDisplayTitles() {
+        #expect(MediaSortKey.name.displayTitle == "Filename")
+        #expect(MediaSortKey.date.displayTitle == "Date")
+        #expect(MediaSortKey.size.displayTitle == "Size")
+        #expect(MediaSortKey.type.displayTitle == "Type")
     }
 
     @Test("Verify DefaultSlideshowSettingsStore Persistence")
