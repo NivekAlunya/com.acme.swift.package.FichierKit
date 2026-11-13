@@ -18,13 +18,13 @@ public enum MediaSortKey: String, Sendable, CaseIterable, Identifiable, Codable 
     public var displayTitle: String {
         switch self {
         case .name:
-            return "Filename"
+            return String(localized: .sortKeyFilename)
         case .date:
-            return "Date"
+            return String(localized: .sortKeyDate)
         case .size:
-            return "Size"
+            return String(localized: .sortKeySize)
         case .type:
-            return "Type"
+            return String(localized: .sortKeyType)
         }
     }
 }

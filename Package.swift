@@ -5,6 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "FichierKit",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v18),
         .tvOS(.v18),

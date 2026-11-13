@@ -276,7 +276,7 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
                     }
                     self.playbackState = self.isPlaying ? .playing : .paused
                 case .failed:
-                    let message = playerItem.error?.localizedDescription ?? "Playback failed."
+                    let message = playerItem.error?.localizedDescription ?? String(localized: .playerPlaybackFailed)
                     self.playbackState = .failed(message)
                     if let error = playerItem.error {
                         self.onError?(error)
@@ -374,7 +374,7 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
                     rawTitle = loadedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
 
-                let title = rawTitle.isEmpty ? "Chapter \(index + 1)" : rawTitle
+                let title = rawTitle.isEmpty ? String(localized: .playerFallbackChapter(index + 1)) : rawTitle
                 resolvedChapters.append(
                     PlayerChapter(
                         id: "av_ch_\(index)_\(Int(startSec * 1000))",
