@@ -25,6 +25,14 @@ Built cleanly in **Swift 6** language mode and structured around **Pure Swift Co
   - **20 Extended Video Formats (`TVVLCPlayerEngine`)**: `mkv`, `avi`, `webm`, `flv`, `f4v`, `wmv`, `asf`, `ts`, `m2ts`, `mts`, `m2v`, `mpg`, `mpeg`, `vob`, `ogv`, `rm`, `mxf`, `wtv`, `hevc`, `mjpeg`, with MIME resolution via `SupportedMediaTypes.mimeType(for:)`.
 - **Per-Source Preference Stores**: Actor-isolated `UserDefaults` stores for per-source sorting (`DefaultMediaSortPreferenceStore`), grid/list view layout (`DefaultMediaLayoutPreferenceStore`), and slideshow settings (`DefaultSlideshowSettingsStore` defaulting to a `4.0s` interval and `.slide` transition).
 
+### 🌐 Localization & String Catalog
+- **Native Package String Catalog (`Localizable.xcstrings`)**: Embedded resource catalog configured with `defaultLocalization: "en"` in `Package.swift` providing complete translations across **11 languages** (`en`, `fr`, `de`, `es`, `it`, `ja`, `nl`, `pl`, `pt-PT`, `zh-Hans`, `zh-Hant`).
+- **Type-Safe `LocalizedStringResource` Symbols**: Model descriptions and playback fallback strings resolve directly against `Bundle.module` via compiler-generated symbols:
+  - **`SMBError`**: Localized error descriptions (`.smbErrorUnreachable`, `.smbErrorBadCredentials`, `.smbErrorTimeout`, `.smbErrorNoShares`, `.smbErrorShareNotFound`).
+  - **`MediaSortKey`**: Localized display titles (`.sortKeyFilename`, `.sortKeyDate`, `.sortKeySize`, `.sortKeyType`).
+  - **Playback Stream Fallbacks**: Localized fallback labels for unlabelled chapters (`.playerFallbackChapter`), audio tracks (`.playerFallbackAudioTrack`), and subtitle tracks (`.playerFallbackSubtitleTrack`, using accurate German `"Untertitelspur"` terminology).
+  - **Slideshow Transitions**: Localized animation titles for `.slideshowTransitionFade` and `.slideshowTransitionSlide`.
+
 ### 📸 Image & Video Thumbnail Pipeline
 - **Memory-Bounded SMB Image Loading (`SMBImageLoader`)**: Decodes and downsamples remote and local images via `ImageIO` (`CGImageSourceCreateThumbnailAtIndex`) into bounded `NSCache` tiers (`48 MB` / `120` thumbnails, `96 MB` / `8` 4K full-screen images up to `3840px`) without disk writes, respecting tvOS storage limits.
 - **Dual-Backend Video Thumbnailing (`SMBVideoThumbnailLoader`)**:
