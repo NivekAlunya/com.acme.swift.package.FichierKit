@@ -13,6 +13,9 @@
     "File management operations are currently supported on Local and iCloud Drive folders." : {
       "comment" : "Error message when storage backend is not supported"
     },
+    "The folder name '%@' is invalid. Names cannot be empty or contain slashes." : {
+      "comment" : "Error message for invalid folder name"
+    },
     "player_fallback_audio_track" : {
       "comment" : "Fallback title for video audio tracks when unlabelled",
       "extractionState" : "manual",

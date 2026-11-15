@@ -33,6 +33,12 @@ struct VideoPlaybackStoreTests {
 
         let clampedRecord = VideoPlaybackRecord(position: 120.0, duration: 100.0)
         #expect(clampedRecord.progress == 1.0)
+
+        let nanRecord = VideoPlaybackRecord(position: Double.nan, duration: 100.0)
+        #expect(nanRecord.progress == 0.0)
+
+        let infRecord = VideoPlaybackRecord(position: 10.0, duration: Double.infinity)
+        #expect(infRecord.progress == 0.0)
     }
 
     @Test("Verify savePosition ignores invalid inputs under 2 seconds")

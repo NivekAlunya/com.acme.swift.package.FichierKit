@@ -32,7 +32,7 @@ public struct VideoPlaybackRecord: Codable, Sendable, Equatable {
 
     /// Normalized playback progress ratio bounded between `0.0` (unstarted) and `1.0` (completed).
     public var progress: Double {
-        guard duration > 0 else { return 0 }
+        guard duration > 0, duration.isFinite, position.isFinite else { return 0.0 }
         return max(0.0, min(1.0, position / duration))
     }
 }
