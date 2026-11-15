@@ -91,7 +91,7 @@ struct SMBFileOperationsTests {
         #expect(removed == ["Folder/delete_me.jpg"])
     }
 
-    @Test("removeItem rejects traversal inputs")
+    @Test("removeItem rejects traversal and invalid colon characters")
     func testRemoveItemRejectsTraversal() async throws {
         let mockSession = MockSMB2Session()
         let client = AMSMB2Client(server: testServer, password: "pwd") { _, _ in
@@ -100,6 +100,10 @@ struct SMBFileOperationsTests {
 
         await #expect(throws: FileOperationError.self) {
             try await client.removeItem(share: "Media", path: "../escape.txt")
+        }
+
+        await #expect(throws: FileOperationError.self) {
+            try await client.removeItem(share: "Media", path: "invalid:stream")
         }
     }
 
@@ -117,21 +121,45 @@ struct SMBFileOperationsTests {
         #expect(moved.first?.to == "Target/photo.jpg")
     }
 
-    @Test("moveItem prevents moving into self or nested subfolder")
+    @Test("moveItem distinguishes alreadyInDestination from cannotMoveIntoSelf")
     func testMoveItemPreventsMovingIntoSelf() async throws {
         let mockSession = MockSMB2Session()
         let client = AMSMB2Client(server: testServer, password: "pwd") { _, _ in
             mockSession
         }
 
-        // Move folder directly into self
-        await #expect(throws: FileOperationError.self) {
+        // Move folder directly into self -> alreadyInDestination
+        do {
             try await client.moveItem(share: "Media", fromPath: "MyFolder", toPath: "MyFolder")
+            Issue.record("Expected alreadyInDestination")
+        } catch let error as FileOperationError {
+            switch error {
+            case .alreadyInDestination:
+                break
+            default:
+                Issue.record("Expected .alreadyInDestination, got \(error)")
+            }
         }
 
-        // Move folder into its own subfolder
-        await #expect(throws: FileOperationError.self) {
+        // Move folder into its own subfolder -> cannotMoveIntoSelf
+        do {
             try await client.moveItem(share: "Media", fromPath: "MyFolder", toPath: "MyFolder/Sub")
+            Issue.record("Expected cannotMoveIntoSelf")
+        } catch let error as FileOperationError {
+            switch error {
+            case .cannotMoveIntoSelf:
+                break
+            default:
+                Issue.record("Expected .cannotMoveIntoSelf, got \(error)")
+            }
+        }
+
+        // Traversal and invalid colon characters in move paths
+        await #expect(throws: FileOperationError.self) {
+            try await client.moveItem(share: "Media", fromPath: "bad:path", toPath: "good")
+        }
+        await #expect(throws: FileOperationError.self) {
+            try await client.moveItem(share: "Media", fromPath: "good", toPath: "bad:path")
         }
     }
 
@@ -146,7 +174,11 @@ struct SMBFileOperationsTests {
             smbShare: "Media",
             smbPath: "file.jpg"
         )
-        let client = MockSMBClient(mockShares: ["Media"], mockItems: [initialItem], mockFileData: ["Media/file.jpg": Data([1, 2, 3])])
+        let client = MockSMBClient(
+            mockShares: ["Media"],
+            mockItems: [initialItem],
+            mockFileData: ["Media/file.jpg": Data([1, 2, 3])]
+        )
 
         try await client.createDirectory(share: "Media", path: "Photos")
         #expect(client.createdDirectories.count == 1)

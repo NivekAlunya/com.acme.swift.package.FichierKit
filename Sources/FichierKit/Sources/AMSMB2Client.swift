@@ -508,18 +508,35 @@ public actor AMSMB2Client: SMBClientProtocol {
         shouldCleanupTempFile = false
     }
 
-    private func performCreateDirectory(share: String, path: String) async throws {
-        let normalized = Self.normalizeRelativePath(path)
-        guard !normalized.isEmpty else {
-            throw FileOperationError.invalidName(path)
-        }
-        let components = normalized.split(separator: "/")
+    private static func validatePathComponents(_ path: String) throws {
+        let components = path.split(separator: "/")
         for component in components {
             let str = String(component).trimmingCharacters(in: .whitespacesAndNewlines)
             if str.isEmpty || str == "." || str == ".." || str.contains(":") {
                 throw FileOperationError.invalidName(String(component))
             }
         }
+    }
+
+    private static func isPermanentFilesystemError(_ error: Error) -> Bool {
+        if let posix = error as? POSIXError {
+            switch posix.code {
+            case .ENOENT, .EACCES, .EPERM, .EEXIST, .ENOTDIR, .EISDIR, .EINVAL, .ENOTEMPTY:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
+    private func performCreateDirectory(share: String, path: String) async throws {
+        let normalized = Self.normalizeRelativePath(path)
+        guard !normalized.isEmpty else {
+            throw FileOperationError.invalidName(path)
+        }
+        try Self.validatePathComponents(normalized)
+        let components = normalized.split(separator: "/")
 
         let maxAttempts = 2
         var lastError: Error?
@@ -547,6 +564,9 @@ public actor AMSMB2Client: SMBClientProtocol {
                     let folderName = String(components.last ?? "")
                     throw FileOperationError.itemAlreadyExists(folderName)
                 }
+                if Self.isPermanentFilesystemError(error) {
+                    throw mapError(error, share: share)
+                }
                 connectedShare = nil
                 lastError = error
                 if attempt < maxAttempts {
@@ -563,10 +583,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         guard !normalized.isEmpty else {
             throw FileOperationError.invalidName(path)
         }
-        let components = normalized.split(separator: "/")
-        if components.contains("..") || components.contains(".") {
-            throw FileOperationError.invalidName(path)
-        }
+        try Self.validatePathComponents(normalized)
 
         let maxAttempts = 2
         var lastError: Error?
@@ -585,6 +602,9 @@ public actor AMSMB2Client: SMBClientProtocol {
                 throw fileOp
             } catch {
                 if Task.isCancelled { throw CancellationError() }
+                if Self.isPermanentFilesystemError(error) {
+                    throw mapError(error, share: share)
+                }
                 connectedShare = nil
                 lastError = error
                 if attempt < maxAttempts {
@@ -605,20 +625,18 @@ public actor AMSMB2Client: SMBClientProtocol {
         guard !normTo.isEmpty else {
             throw FileOperationError.invalidName(toPath)
         }
-        let fromComponents = normFrom.split(separator: "/")
+        try Self.validatePathComponents(normFrom)
+        try Self.validatePathComponents(normTo)
         let toComponents = normTo.split(separator: "/")
-        if fromComponents.contains("..") || toComponents.contains("..") {
-            throw FileOperationError.invalidName("..")
-        }
-
-        // Cannot move into self or child folder
-        if normTo == normFrom || normTo.hasPrefix(normFrom + "/") {
-            throw FileOperationError.cannotMoveIntoSelf
-        }
 
         // Already in destination
         if normFrom == normTo {
             throw FileOperationError.alreadyInDestination
+        }
+
+        // Cannot move into self or child folder
+        if normTo.hasPrefix(normFrom + "/") {
+            throw FileOperationError.cannotMoveIntoSelf
         }
 
         let maxAttempts = 2
@@ -646,6 +664,9 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if desc.contains("exists") || desc.contains("already") {
                     let itemName = String(toComponents.last ?? "")
                     throw FileOperationError.itemAlreadyExists(itemName)
+                }
+                if Self.isPermanentFilesystemError(error) {
+                    throw mapError(error, share: share)
                 }
                 connectedShare = nil
                 lastError = error
