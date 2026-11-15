@@ -72,7 +72,8 @@ public enum SupportedMediaTypes: Sendable {
 
     /// Returns `true` if the extension represents a document format (PDF).
     public static func isDocument(extension ext: String) -> Bool {
-        documentExtensions.contains(ext.lowercased())
+        let cleaned = ext.trimmingCharacters(in: CharacterSet(charactersIn: ". \t\r\n")).lowercased()
+        return documentExtensions.contains(cleaned)
     }
 
     /// Returns `true` if the extension represents a PDF document on supported platforms.
@@ -80,7 +81,8 @@ public enum SupportedMediaTypes: Sendable {
         #if os(tvOS)
         return false
         #else
-        return ext.lowercased() == "pdf"
+        let cleaned = ext.trimmingCharacters(in: CharacterSet(charactersIn: ". \t\r\n")).lowercased()
+        return cleaned == "pdf"
         #endif
     }
 
