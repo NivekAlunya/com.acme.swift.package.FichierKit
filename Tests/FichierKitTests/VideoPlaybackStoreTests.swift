@@ -8,6 +8,7 @@ import Testing
 @testable import FichierKit
 
 @Suite("VideoPlaybackStore Tests")
+@MainActor
 struct VideoPlaybackStoreTests {
     private struct TestContext {
         let store: VideoPlaybackStore

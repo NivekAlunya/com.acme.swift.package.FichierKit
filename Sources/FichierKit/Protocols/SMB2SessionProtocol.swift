@@ -23,4 +23,7 @@ protocol SMB2SessionProtocol: Sendable {
         to localURL: URL,
         progress: (@Sendable (Int64, Int64) -> Bool)?
     ) async throws
+    func createDirectory(atPath path: String) async throws
+    func removeItem(atPath path: String) async throws
+    func moveItem(atPath path: String, toPath: String) async throws
 }

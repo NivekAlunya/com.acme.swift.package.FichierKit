@@ -16,12 +16,19 @@ actor MockSMB2Session: SMB2SessionProtocol {
     }
 
     private let onDownload: @Sendable (Int, String, URL, (@Sendable (Int64, Int64) -> Bool)?) async throws -> Void
+    var onCreateDirectory: (@Sendable (String) async throws -> Void)?
+    var onRemoveItem: (@Sendable (String) async throws -> Void)?
+    var onMoveItem: (@Sendable (String, String) async throws -> Void)?
+
     private(set) var connectShareCalls: [String] = []
     private(set) var disconnectShareCallCount: Int = 0
     private(set) var downloadAttempts: [DownloadAttempt] = []
+    private(set) var createdDirectories: [String] = []
+    private(set) var removedItems: [String] = []
+    private(set) var movedItems: [(from: String, to: String)] = []
 
     init(
-        onDownload: @escaping @Sendable (Int, String, URL, (@Sendable (Int64, Int64) -> Bool)?) async throws -> Void
+        onDownload: @escaping @Sendable (Int, String, URL, (@Sendable (Int64, Int64) -> Bool)?) async throws -> Void = { _, _, _, _ in }
     ) {
         self.onDownload = onDownload
     }
@@ -62,5 +69,26 @@ actor MockSMB2Session: SMB2SessionProtocol {
         downloadAttempts.append(DownloadAttempt(path: path, destinationURL: localURL))
         let attemptNumber = downloadAttempts.count
         try await onDownload(attemptNumber, path, localURL, progress)
+    }
+
+    func createDirectory(atPath path: String) async throws {
+        createdDirectories.append(path)
+        if let onCreateDirectory {
+            try await onCreateDirectory(path)
+        }
+    }
+
+    func removeItem(atPath path: String) async throws {
+        removedItems.append(path)
+        if let onRemoveItem {
+            try await onRemoveItem(path)
+        }
+    }
+
+    func moveItem(atPath path: String, toPath: String) async throws {
+        movedItems.append((from: path, to: toPath))
+        if let onMoveItem {
+            try await onMoveItem(path, toPath)
+        }
     }
 }

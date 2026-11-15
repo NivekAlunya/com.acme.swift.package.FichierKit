@@ -47,11 +47,31 @@ public protocol SMBClientProtocol: Sendable {
         progress: (@Sendable (Int64, Int64) -> Bool)?
     ) async throws
 
+    /// Creates a directory within a specified share.
+    func createDirectory(share: String, path: String) async throws
+
+    /// Removes a file or directory within a specified share.
+    func removeItem(share: String, path: String) async throws
+
+    /// Moves a file or directory within a specified share.
+    func moveItem(share: String, fromPath: String, toPath: String) async throws
+
     /// Disconnects the active SMB session cleanly. Implementations must be idempotent and safe when no session is active.
     func disconnect() async
 }
 
 public extension SMBClientProtocol {
+    func createDirectory(share: String, path: String) async throws {
+        throw SMBError.unknown("createDirectory operation is not supported on this client.")
+    }
+
+    func removeItem(share: String, path: String) async throws {
+        throw SMBError.unknown("removeItem operation is not supported on this client.")
+    }
+
+    func moveItem(share: String, fromPath: String, toPath: String) async throws {
+        throw SMBError.unknown("moveItem operation is not supported on this client.")
+    }
     /// Default bounded-page fallback using `listDirectory(share:path:)` with folder-first deterministic sorting.
     func listDirectoryPage(
         share: String,
