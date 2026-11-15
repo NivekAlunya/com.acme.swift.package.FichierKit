@@ -43,6 +43,37 @@ enum VideoTestFixtureGenerator {
         return outputURL
     }
 
+    static func createMultiKeyframeMP4File(seconds: Double = 10, width: Int = 160, height: Int = 120) async throws -> URL {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fichierkit_multi_\(UUID().uuidString).mp4")
+        try? FileManager.default.removeItem(at: outputURL)
+
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+        let (input, adaptor) = try configureVideoWriter(writer, width: width, height: height)
+
+        guard writer.startWriting() else {
+            throw writer.error ?? NSError(domain: "VideoTestFixtureGenerator", code: 2)
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        let fps = 10
+        let totalFrames = max(1, Int(seconds * Double(fps)))
+        var timestamps: [CMTime] = []
+        for i in 0..<totalFrames {
+            timestamps.append(CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps)))
+        }
+
+        try await appendGrayFrames(timestamps: timestamps, width: width, height: height, input: input, adaptor: adaptor)
+
+        input.markAsFinished()
+        await writer.finishWriting()
+        if writer.status != .completed {
+            throw writer.error ?? NSError(domain: "VideoTestFixtureGenerator", code: 5)
+        }
+
+        return outputURL
+    }
+
     private static func configureVideoWriter(
         _ writer: AVAssetWriter,
         width: Int,

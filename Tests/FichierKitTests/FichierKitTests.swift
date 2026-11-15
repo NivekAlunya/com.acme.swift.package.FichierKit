@@ -1073,9 +1073,10 @@ struct FichierKitTests {
 
         #expect(url1 != url2)
         #expect(url2 != url3)
-        #expect(url1.lastPathComponent.contains(".crash"))
-        #expect(url2.lastPathComponent.contains("_001.crash"))
-        #expect(url3.lastPathComponent.contains("_002.crash"))
+        #expect(url1.lastPathComponent.hasPrefix("crash-"))
+        #expect(url1.lastPathComponent.hasSuffix(".txt"))
+        #expect(url2.lastPathComponent.contains("_001.txt"))
+        #expect(url3.lastPathComponent.contains("_002.txt"))
 
         let content1 = try String(contentsOf: url1, encoding: .utf8)
         let content2 = try String(contentsOf: url2, encoding: .utf8)

@@ -108,6 +108,27 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
     }
 
+    /// Creates a new directory at the specified path within a share.
+    public func createDirectory(share: String, path: String) async throws {
+        try await operationLimiter.withPermit {
+            try await self.performCreateDirectory(share: share, path: path)
+        }
+    }
+
+    /// Removes an item (file or directory) at the specified path within a share.
+    public func removeItem(share: String, path: String) async throws {
+        try await operationLimiter.withPermit {
+            try await self.performRemoveItem(share: share, path: path)
+        }
+    }
+
+    /// Moves or renames an item (file or directory) within a share from `fromPath` to `toPath`.
+    public func moveItem(share: String, fromPath: String, toPath: String) async throws {
+        try await operationLimiter.withPermit {
+            try await self.performMoveItem(share: share, fromPath: fromPath, toPath: toPath)
+        }
+    }
+
     /// Disconnects the underlying SMB session cleanly and clears any cached directory index.
     ///
     /// Safe to call from a cancelled task; permit acquisition and disconnect complete idempotently.
@@ -485,6 +506,177 @@ public actor AMSMB2Client: SMBClientProtocol {
 
         try Self.installCompletedFile(from: tempURL, to: destinationURL)
         shouldCleanupTempFile = false
+    }
+
+    private static func validatePathComponents(_ path: String) throws {
+        let components = path.split(separator: "/")
+        for component in components {
+            let str = String(component).trimmingCharacters(in: .whitespacesAndNewlines)
+            if str.isEmpty || str == "." || str == ".." || str.contains(":") {
+                throw FileOperationError.invalidName(String(component))
+            }
+        }
+    }
+
+    private static func isPermanentFilesystemError(_ error: Error) -> Bool {
+        if let posix = error as? POSIXError {
+            switch posix.code {
+            case .ENOENT, .EACCES, .EPERM, .EEXIST, .ENOTDIR, .EISDIR, .EINVAL, .ENOTEMPTY:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
+    private func performCreateDirectory(share: String, path: String) async throws {
+        let normalized = Self.normalizeRelativePath(path)
+        guard !normalized.isEmpty else {
+            throw FileOperationError.invalidName(path)
+        }
+        try Self.validatePathComponents(normalized)
+        let components = normalized.split(separator: "/")
+
+        let maxAttempts = 2
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            try Task.checkCancellation()
+            do {
+                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
+                try Task.checkCancellation()
+                try await mgr.createDirectory(atPath: normalized)
+                directorySnapshot = nil
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let fileOp as FileOperationError {
+                throw fileOp
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                if let posix = error as? POSIXError, posix.code == .EEXIST {
+                    let folderName = String(components.last ?? "")
+                    throw FileOperationError.itemAlreadyExists(folderName)
+                }
+                let desc = error.localizedDescription.lowercased()
+                if desc.contains("exists") || desc.contains("already") {
+                    let folderName = String(components.last ?? "")
+                    throw FileOperationError.itemAlreadyExists(folderName)
+                }
+                if Self.isPermanentFilesystemError(error) {
+                    throw mapError(error, share: share)
+                }
+                connectedShare = nil
+                lastError = error
+                if attempt < maxAttempts {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+            }
+        }
+
+        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
+    }
+
+    private func performRemoveItem(share: String, path: String) async throws {
+        let normalized = Self.normalizeRelativePath(path)
+        guard !normalized.isEmpty else {
+            throw FileOperationError.invalidName(path)
+        }
+        try Self.validatePathComponents(normalized)
+
+        let maxAttempts = 2
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            try Task.checkCancellation()
+            do {
+                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
+                try Task.checkCancellation()
+                try await mgr.removeItem(atPath: normalized)
+                directorySnapshot = nil
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let fileOp as FileOperationError {
+                throw fileOp
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                if Self.isPermanentFilesystemError(error) {
+                    throw mapError(error, share: share)
+                }
+                connectedShare = nil
+                lastError = error
+                if attempt < maxAttempts {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+            }
+        }
+
+        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
+    }
+
+    private func performMoveItem(share: String, fromPath: String, toPath: String) async throws {
+        let normFrom = Self.normalizeRelativePath(fromPath)
+        let normTo = Self.normalizeRelativePath(toPath)
+        guard !normFrom.isEmpty else {
+            throw FileOperationError.invalidName(fromPath)
+        }
+        guard !normTo.isEmpty else {
+            throw FileOperationError.invalidName(toPath)
+        }
+        try Self.validatePathComponents(normFrom)
+        try Self.validatePathComponents(normTo)
+        let toComponents = normTo.split(separator: "/")
+
+        // Already in destination
+        if normFrom == normTo {
+            throw FileOperationError.alreadyInDestination
+        }
+
+        // Cannot move into self or child folder
+        if normTo.hasPrefix(normFrom + "/") {
+            throw FileOperationError.cannotMoveIntoSelf
+        }
+
+        let maxAttempts = 2
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            try Task.checkCancellation()
+            do {
+                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
+                try Task.checkCancellation()
+                try await mgr.moveItem(atPath: normFrom, toPath: normTo)
+                directorySnapshot = nil
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let fileOp as FileOperationError {
+                throw fileOp
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                if let posix = error as? POSIXError, posix.code == .EEXIST {
+                    let itemName = String(toComponents.last ?? "")
+                    throw FileOperationError.itemAlreadyExists(itemName)
+                }
+                let desc = error.localizedDescription.lowercased()
+                if desc.contains("exists") || desc.contains("already") {
+                    let itemName = String(toComponents.last ?? "")
+                    throw FileOperationError.itemAlreadyExists(itemName)
+                }
+                if Self.isPermanentFilesystemError(error) {
+                    throw mapError(error, share: share)
+                }
+                connectedShare = nil
+                lastError = error
+                if attempt < maxAttempts {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+            }
+        }
+
+        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performDisconnect() async {

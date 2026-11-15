@@ -77,6 +77,18 @@ final class AMSMB2SessionAdapter: SMB2SessionProtocol, @unchecked Sendable {
         }
     }
 
+    func createDirectory(atPath path: String) async throws {
+        try await manager.createDirectory(atPath: path)
+    }
+
+    func removeItem(atPath path: String) async throws {
+        try await manager.removeItem(atPath: path)
+    }
+
+    func moveItem(atPath path: String, toPath: String) async throws {
+        try await manager.moveItem(atPath: path, toPath: toPath)
+    }
+
     private static func extractFileSize(from dict: [URLResourceKey: Any]) -> Int64 {
         if let number = dict[.fileSizeKey] as? NSNumber {
             return number.int64Value

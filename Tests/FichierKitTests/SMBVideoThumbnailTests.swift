@@ -144,7 +144,6 @@ struct SMBVideoThumbnailTests {
         let unwrapped = try #require(decoded)
         #expect(unwrapped.size.width > 0)
     }
-    #endif
 
     @Test("Returns nil safely for unsupported or missing video assets")
     func testUnsupportedAndMissingVideoSafelyReturnNil() async {
@@ -178,6 +177,7 @@ struct SMBVideoThumbnailTests {
         )
         #expect(timeoutResult == nil)
     }
+    #endif
 
     @Test("SMBVideoThumbnailLimiter handles concurrent permits and cancellation")
     func testLimiterCancellationAndConcurrency() async throws {
@@ -203,6 +203,7 @@ struct SMBVideoThumbnailTests {
         #expect(normalResult == 42)
     }
 
+    #if canImport(UIKit)
     @Test("Direct extractSMBFrame extracts native frame and respects zero/invalid input safely")
     func testExtractSMBFrameDirect() async throws {
         let tempVideoURL = try await VideoTestFixtureGenerator.createSampleMP4File()
@@ -233,4 +234,5 @@ struct SMBVideoThumbnailTests {
         )
         #expect(zeroFrame == nil)
     }
+    #endif
 }
