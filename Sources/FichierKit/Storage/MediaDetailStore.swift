@@ -23,6 +23,10 @@ public final class MediaDetailStore: Sendable {
     /// Shared singleton instance.
     public static let shared = MediaDetailStore()
 
+    /// Shared queue used by AVAssetResourceLoader delegate callbacks during video metadata probing.
+    // swiftlint:disable:next no_legacy_dispatch_queue
+    private static let videoProbeQueue = DispatchQueue(label: "com.fichierkit.detail.videoProbe", qos: .utility)
+
     /// In-memory cache holding resolved detail strings keyed by item ID.
     private let cache: NSCache<NSString, NSString> = {
         let c = NSCache<NSString, NSString>()
@@ -128,27 +132,10 @@ public final class MediaDetailStore: Sendable {
             if let dur = try? await asset.load(.duration).seconds, dur > 0 {
                 return MediaFormatHelper.formatDuration(dur)
             }
-        } else if SupportedMediaTypes.isPDF(extension: ext) {
-            #if canImport(CoreGraphics)
-            if let doc = CGPDFDocument(url as CFURL) {
-                let count = doc.numberOfPages
-                if count > 0 {
-                    return MediaFormatHelper.formatPageCount(count)
-                }
-            }
-            #endif
         } else if SupportedMediaTypes.isImage(extension: ext) {
-            #if canImport(ImageIO)
-            let options = [kCGImageSourceShouldCache: false] as CFDictionary
-            if let source = CGImageSourceCreateWithURL(url as CFURL, options),
-               let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
-                let w = props[kCGImagePropertyPixelWidth] as? Int
-                let h = props[kCGImagePropertyPixelHeight] as? Int
-                if let w, let h, w > 0, h > 0 {
-                    return MediaFormatHelper.formatDimensions(width: w, height: h)
-                }
-            }
-            #endif
+            return await Task.detached(priority: .utility) {
+                Self.parseLocalImageDimensions(url: url)
+            }.value
         }
 
         return nil
@@ -181,35 +168,9 @@ public final class MediaDetailStore: Sendable {
             )
             guard let prefix, !prefix.isEmpty else { return nil }
 
-            #if canImport(ImageIO)
-            let options = [kCGImageSourceShouldCache: false] as CFDictionary
-            if let source = CGImageSourceCreateWithData(prefix as CFData, options),
-               let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
-                let w = props[kCGImagePropertyPixelWidth] as? Int
-                let h = props[kCGImagePropertyPixelHeight] as? Int
-                if let w, let h, w > 0, h > 0 {
-                    return MediaFormatHelper.formatDimensions(width: w, height: h)
-                }
-            }
-            #endif
-        } else if SupportedMediaTypes.isPDF(extension: ext) {
-            // Read first 64 KB prefix to parse page count if catalog is upfront
-            let prefix = try? await sharesSource.client.readFileData(
-                share: share,
-                path: path,
-                maxBytes: 65536
-            )
-            if let prefix, !prefix.isEmpty {
-                #if canImport(CoreGraphics)
-                if let provider = CGDataProvider(data: prefix as CFData),
-                   let doc = CGPDFDocument(provider) {
-                    let count = doc.numberOfPages
-                    if count > 0 {
-                        return MediaFormatHelper.formatPageCount(count)
-                    }
-                }
-                #endif
-            }
+            return await Task.detached(priority: .utility) {
+                Self.parsePrefixImageDimensions(data: prefix)
+            }.value
         } else if SupportedMediaTypes.isVideo(extension: ext) {
             // Fast AVURLAsset probe over SMBAVAssetResourceLoaderDelegate with strict 1.5s timeout
             let streamURL = SMBAVAssetResourceLoaderDelegate.makeStreamURL(fileName: item.name)
@@ -220,10 +181,8 @@ public final class MediaDetailStore: Sendable {
                 fileName: item.name,
                 fileSize: item.size
             )
-            // swiftlint:disable:next no_legacy_dispatch_queue
-            let queue = DispatchQueue(label: "com.fichierkit.detail.vid.\(UUID().uuidString)")
             let asset = AVURLAsset(url: streamURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
-            asset.resourceLoader.setDelegate(delegate, queue: queue)
+            asset.resourceLoader.setDelegate(delegate, queue: Self.videoProbeQueue)
 
             defer {
                 delegate.cancelAll()
@@ -237,19 +196,56 @@ public final class MediaDetailStore: Sendable {
                 }
                 group.addTask {
                     try? await Task.sleep(for: .milliseconds(1500))
+                    // Cancel delegate and asset immediately on timeout to abort network I/O and unblock group join
+                    delegate.cancelAll()
+                    asset.cancelLoading()
                     return nil
                 }
                 let first = await group.next() ?? nil
                 group.cancelAll()
                 return first
             }
-            withExtendedLifetime((delegate, queue)) {}
+            withExtendedLifetime(delegate) {}
 
             if let dur, dur > 0 {
                 return MediaFormatHelper.formatDuration(dur)
             }
         }
 
+        return nil
+    }
+
+    // MARK: - Non-isolated Background Image Parsers
+
+    private nonisolated static func parseLocalImageDimensions(url: URL) -> String? {
+        #if canImport(ImageIO)
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, options),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return nil
+        }
+        let w = props[kCGImagePropertyPixelWidth] as? Int
+        let h = props[kCGImagePropertyPixelHeight] as? Int
+        if let w, let h, w > 0, h > 0 {
+            return MediaFormatHelper.formatDimensions(width: w, height: h)
+        }
+        #endif
+        return nil
+    }
+
+    private nonisolated static func parsePrefixImageDimensions(data: Data) -> String? {
+        #if canImport(ImageIO)
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, options),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return nil
+        }
+        let w = props[kCGImagePropertyPixelWidth] as? Int
+        let h = props[kCGImagePropertyPixelHeight] as? Int
+        if let w, let h, w > 0, h > 0 {
+            return MediaFormatHelper.formatDimensions(width: w, height: h)
+        }
+        #endif
         return nil
     }
 }

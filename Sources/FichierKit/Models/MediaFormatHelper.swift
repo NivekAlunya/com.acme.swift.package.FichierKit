@@ -21,7 +21,7 @@ public enum MediaFormatHelper: Sendable {
 
     /// Formats a playback duration in seconds into a standard timestamp string (e.g. "02:45" or "1:15:30").
     public static func formatDuration(_ seconds: Double) -> String {
-        guard seconds.isFinite && !seconds.isNaN && seconds > 0 else { return "" }
+        guard seconds.isFinite && !seconds.isNaN && seconds > 0 && seconds < Double(Int.max) else { return "" }
         let total = Int(seconds.rounded())
         let s = total % 60
         let m = (total / 60) % 60

@@ -29,6 +29,10 @@ struct MediaDetailStoreTests {
 
         // Over 1 hour
         #expect(MediaFormatHelper.formatDuration(4530) == "1:15:30")
+
+        // Overflow bounds protection
+        #expect(MediaFormatHelper.formatDuration(.greatestFiniteMagnitude) == "")
+        #expect(MediaFormatHelper.formatDuration(Double(Int.max) * 2) == "")
     }
 
     @Test("Format image frame dimensions accurately")
@@ -76,5 +80,49 @@ struct MediaDetailStoreTests {
 
         let detail = await store.resolveDetail(for: folderItem)
         #expect(detail == nil)
+    }
+
+    @Test("Resolve PDF returns nil (page count disabled)")
+    @MainActor
+    func testResolvePDFReturnsNil() async {
+        let store = MediaDetailStore.shared
+        #if !os(tvOS)
+        let itemType: MediaItemType = .document
+        #else
+        let itemType: MediaItemType = .image
+        #endif
+        let pdfItem = MediaSourceItem(
+            id: "pdf-1",
+            name: "Document.pdf",
+            path: "Document.pdf",
+            type: itemType
+        )
+
+        let detail = await store.resolveDetail(for: pdfItem)
+        #expect(detail == nil)
+    }
+
+    @Test("Concurrent resolution queries for the same item are deduplicated")
+    @MainActor
+    func testConcurrentResolutionDeduplication() async {
+        let store = MediaDetailStore.shared
+        store.clearCache()
+
+        let folderItem = MediaSourceItem(
+            id: "dedup-folder-1",
+            name: "Folder",
+            path: "Folder",
+            type: .folder
+        )
+
+        // Launch multiple concurrent resolution requests
+        async let first = store.resolveDetail(for: folderItem)
+        async let second = store.resolveDetail(for: folderItem)
+        async let third = store.resolveDetail(for: folderItem)
+
+        let (r1, r2, r3) = await (first, second, third)
+        #expect(r1 == nil)
+        #expect(r2 == nil)
+        #expect(r3 == nil)
     }
 }
