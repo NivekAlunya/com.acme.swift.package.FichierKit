@@ -79,17 +79,24 @@ extension LocalFolderMediaSource {
         }
 
         for item in items {
-            if let url = item.localURL {
+            if let url = item.localURL, fileManager.fileExists(atPath: url.path) {
                 #if !os(tvOS)
                 do {
                     try fileManager.trashItem(at: url, resultingItemURL: nil)
+                } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                    // Child item was already removed with parent folder deletion
+                    continue
                 } catch let error as CocoaError where error.code == .featureUnsupported {
                     try fileManager.removeItem(at: url)
                 } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == 3328 {
                     try fileManager.removeItem(at: url)
                 }
                 #else
-                try fileManager.removeItem(at: url)
+                do {
+                    try fileManager.removeItem(at: url)
+                } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                    continue
+                }
                 #endif
             }
         }
@@ -196,7 +203,7 @@ extension LocalFolderMediaSource {
         let normalizedParent = (parentRelativePath == "." ? "" : parentRelativePath)
         let newRelativePath = normalizedParent.isEmpty ? trimmed : "\(normalizedParent)/\(trimmed)"
 
-        return MediaSourceItem(
+        let newItem = MediaSourceItem(
             id: "\(id)::\(newRelativePath)",
             name: trimmed,
             path: newRelativePath,
@@ -206,5 +213,7 @@ extension LocalFolderMediaSource {
             localURL: targetURL,
             sourceID: id
         )
+        await VideoPlaybackStore.shared.migratePosition(from: item.id, to: newItem.id)
+        return newItem
     }
 }
