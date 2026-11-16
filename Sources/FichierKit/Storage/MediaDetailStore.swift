@@ -171,7 +171,7 @@ public final class MediaDetailStore: Sendable {
             return await Task.detached(priority: .utility) {
                 Self.parsePrefixImageDimensions(data: prefix)
             }.value
-        } else if SupportedMediaTypes.isVideo(extension: ext) {
+        } else if SupportedMediaTypes.isVideo(extension: ext) && !SupportedMediaTypes.isExtendedVideo(extension: ext) {
             // Fast AVURLAsset probe over SMBAVAssetResourceLoaderDelegate with strict 1.5s timeout
             let streamURL = SMBAVAssetResourceLoaderDelegate.makeStreamURL(fileName: item.name)
             let delegate = SMBAVAssetResourceLoaderDelegate(

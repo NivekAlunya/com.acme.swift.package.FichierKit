@@ -211,16 +211,9 @@ public actor SMBVideoThumbnailLoader {
                 maxDimension: maxDimension
             )
         }
-        if let extendedImage = await extractWithDirectSMBVLC(
+        return await extractWithDirectSMBVLC(
             server: server, password: password, share: share, path: path,
             maxDimension: maxDimension
-        ) {
-            return extendedImage
-        }
-        guard !Task.isCancelled else { return nil }
-        return await extractWithSMBAVFoundation(
-            client: client, share: share, path: path, fileName: fileName,
-            fileSize: fileSize, maxDimension: maxDimension, timeoutSeconds: 8.0
         )
     }
 

@@ -96,6 +96,7 @@ public final class VLCVideoThumbnailSession: NSObject {
         let currentOwner = owner
         owner = nil
         #if canImport(VLCKit)
+        thumbnailer?.cancel()
         thumbnailer = nil
         #endif
 
