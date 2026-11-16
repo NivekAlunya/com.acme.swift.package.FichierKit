@@ -22,7 +22,7 @@ final class AMSMB2SessionAdapter: SMB2SessionProtocol, @unchecked Sendable {
         try await manager.connectShare(name: name)
     }
 
-    func disconnectShare(gracefully: Bool = true) async throws {
+    func disconnectShare(gracefully: Bool) async throws {
         try await manager.disconnectShare(gracefully: gracefully)
     }
 
