@@ -22,6 +22,8 @@ actor MockSMB2Session: SMB2SessionProtocol {
 
     private(set) var connectShareCalls: [String] = []
     private(set) var disconnectShareCallCount: Int = 0
+    private(set) var lastDisconnectGraceful: Bool?
+    private(set) var disconnectShareCalls: [Bool] = []
     private(set) var downloadAttempts: [DownloadAttempt] = []
     private(set) var createdDirectories: [String] = []
     private(set) var removedItems: [String] = []
@@ -37,8 +39,10 @@ actor MockSMB2Session: SMB2SessionProtocol {
         connectShareCalls.append(name)
     }
 
-    func disconnectShare() async throws {
+    func disconnectShare(gracefully: Bool) async throws {
         disconnectShareCallCount += 1
+        lastDisconnectGraceful = gracefully
+        disconnectShareCalls.append(gracefully)
     }
 
     func listShareNames(enumerateHidden: Bool) async throws -> [String] {

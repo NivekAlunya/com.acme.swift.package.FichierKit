@@ -680,7 +680,7 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private func performDisconnect() async {
-        try? await manager?.disconnectShare()
+        try? await manager?.disconnectShare(gracefully: true)
         manager = nil
         connectedShare = nil
         directorySnapshot = nil
@@ -701,7 +701,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         let mgr = try getOrCreateManager()
         if forceReconnect || connectedShare != share {
             if forceReconnect {
-                try? await mgr.disconnectShare()
+                try? await mgr.disconnectShare(gracefully: true)
                 connectedShare = nil
             }
             try await mgr.connectShare(name: share)

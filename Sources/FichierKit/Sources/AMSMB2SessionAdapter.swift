@@ -22,8 +22,8 @@ final class AMSMB2SessionAdapter: SMB2SessionProtocol, @unchecked Sendable {
         try await manager.connectShare(name: name)
     }
 
-    func disconnectShare() async throws {
-        try await manager.disconnectShare()
+    func disconnectShare(gracefully: Bool) async throws {
+        try await manager.disconnectShare(gracefully: gracefully)
     }
 
     func listShareNames(enumerateHidden: Bool) async throws -> [String] {
