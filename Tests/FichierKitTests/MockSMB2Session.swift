@@ -37,7 +37,7 @@ actor MockSMB2Session: SMB2SessionProtocol {
         connectShareCalls.append(name)
     }
 
-    func disconnectShare() async throws {
+    func disconnectShare(gracefully: Bool = true) async throws {
         disconnectShareCallCount += 1
     }
 
