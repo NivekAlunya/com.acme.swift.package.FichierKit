@@ -228,6 +228,18 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
         }
     }
 
+    /// Migrates saved video playback progress when a video is renamed.
+    ///
+    /// - Parameters:
+    ///   - oldID: Original media item identifier.
+    ///   - newID: New media item identifier.
+    public func migratePosition(from oldID: String, to newID: String) {
+        if let rec = latestRecord(for: oldID) {
+            records[newID] = rec
+            clearPosition(for: oldID)
+        }
+    }
+
     /// Merges unobserved in-memory positions into the observed dictionary and immediately flushes all records to disk.
     public func flush() {
         persistTask?.cancel()
