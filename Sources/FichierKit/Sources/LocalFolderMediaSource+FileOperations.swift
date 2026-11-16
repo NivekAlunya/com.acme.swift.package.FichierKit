@@ -73,7 +73,7 @@ extension LocalFolderMediaSource {
     /// - Throws: `FileOperationError` or filesystem errors.
     public func deleteItems(_ items: [MediaSourceItem]) async throws {
         for item in items {
-            guard let url = item.localURL, fileManager.fileExists(atPath: url.path) else {
+            guard item.localURL != nil else {
                 throw FileOperationError.missingURL(item.name)
             }
         }
