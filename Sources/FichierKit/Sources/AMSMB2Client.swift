@@ -174,7 +174,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if attempt < maxAttempts {
                     let backoffSeconds = Double(attempt) * 1.5
                     let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try? await Task.sleep(nanoseconds: backoffNs)
+                    try await Task.sleep(nanoseconds: backoffNs)
                 }
             }
         }
@@ -357,7 +357,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                     // Escalating backoff for spinning mechanical drive wake-up (1.5s, 3.0s, 4.5s)
                     let backoffSeconds = Double(attempt) * 1.5
                     let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try? await Task.sleep(nanoseconds: backoffNs)
+                    try await Task.sleep(nanoseconds: backoffNs)
                 } else {
                     connectedShare = nil
                 }
@@ -409,7 +409,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if attempt < maxAttempts {
                     let backoffSeconds = Double(attempt) * 1.5
                     let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try? await Task.sleep(nanoseconds: backoffNs)
+                    try await Task.sleep(nanoseconds: backoffNs)
                 } else {
                     connectedShare = nil
                 }
@@ -460,7 +460,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if attempt < maxAttempts {
                     let backoffSeconds = Double(attempt) * 1.0
                     let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try? await Task.sleep(nanoseconds: backoffNs)
+                    try await Task.sleep(nanoseconds: backoffNs)
                 } else {
                     connectedShare = nil
                 }
@@ -501,7 +501,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if attempt < maxAttempts {
                     let backoffSeconds = Double(attempt) * 1.0
                     let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try? await Task.sleep(nanoseconds: backoffNs)
+                    try await Task.sleep(nanoseconds: backoffNs)
                 } else {
                     connectedShare = nil
                 }
@@ -919,7 +919,6 @@ public actor AMSMB2Client: SMBClientProtocol {
         if desc.contains("status_device_busy") || desc.contains("0xc000009a") || desc.contains("0x0000009a") { return true }
         if desc.contains("status_device_off_line") || desc.contains("0xc000003a") || desc.contains("0x0000003a") { return true }
         if desc.contains("status_device_data_error") || desc.contains("0xc000009c") || desc.contains("0x0000009c") { return true }
-        if desc.contains("status_unsuccessful") || desc.contains("0xc0000001") || desc.contains("0x00000001") { return true }
         if desc.contains("status_logical_disk_error") || desc.contains("0xc00000b7") { return true }
         if desc.contains("timed out") || desc.contains("timeout") { return true }
         if desc.contains("not ready") || desc.contains("busy") || desc.contains("spin") { return true }
