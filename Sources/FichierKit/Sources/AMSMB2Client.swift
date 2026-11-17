@@ -917,7 +917,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         if desc.contains("status_io_timeout") || desc.contains("0xc00000b5") || desc.contains("0x000000b5") { return true }
         if desc.contains("status_device_not_ready") || desc.contains("0xc00000a3") || desc.contains("0x000000a3") { return true }
         if desc.contains("status_device_busy") || desc.contains("0xc000009a") || desc.contains("0x0000009a") { return true }
-        if desc.contains("status_device_off_line") || desc.contains("0xc000003a") || desc.contains("0x0000003a") { return true }
+        if desc.contains("status_device_off_line") { return true }
         if desc.contains("status_device_data_error") || desc.contains("0xc000009c") || desc.contains("0x0000009c") { return true }
         if desc.contains("status_logical_disk_error") || desc.contains("0xc00000b7") { return true }
         if desc.contains("timed out") || desc.contains("timeout") { return true }
