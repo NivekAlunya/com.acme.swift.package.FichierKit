@@ -143,19 +143,43 @@ public actor AMSMB2Client: SMBClientProtocol {
     // MARK: - Serialized SMB Implementations
 
     private func performListShares() async throws -> [String] {
-        do {
-            let mgr = try getOrCreateManager()
-            let shareNames = try await mgr.listShareNames(enumerateHidden: false)
-            connectedShare = nil
-            return shareNames.sorted {
-                $0.localizedStandardCompare($1) == .orderedAscending
+        let maxAttempts = 3
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            try Task.checkCancellation()
+            do {
+                let mgr = try getOrCreateManager()
+                let shareNames = try await mgr.listShareNames(enumerateHidden: false)
+                connectedShare = nil
+                return shareNames.sorted {
+                    $0.localizedStandardCompare($1) == .orderedAscending
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                connectedShare = nil
+                lastError = error
+
+                if isConnectionResetError(error) {
+                    try? await manager?.disconnectShare(gracefully: false)
+                    manager = nil
+                }
+
+                if !isSpinUpOrTransientError(error) {
+                    throw mapError(error, share: nil)
+                }
+
+                if attempt < maxAttempts {
+                    let backoffSeconds = Double(attempt) * 1.5
+                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: backoffNs)
+                }
             }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            connectedShare = nil
-            throw mapError(error, share: nil)
         }
+
+        throw mapError(lastError ?? SMBError.unreachable(server.host), share: nil)
     }
 
     private func performListDirectory(share: String, path: String) async throws -> [MediaSourceItem] {
@@ -233,13 +257,16 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private func fetchAndMapDirectoryEntries(share: String, normalizedPath: String) async throws -> [MediaSourceItem] {
-        let maxAttempts = 2
+        let maxAttempts = 4
         var lastError: Error?
 
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             do {
-                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
+                // On initial retry, preserve tree connection so spinning media is not disrupted.
+                // Reconnect only after multiple failures or when socket is reset.
+                let forceReconnect = attempt > 2 || (lastError != nil && isConnectionResetError(lastError!))
+                let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
                 try Task.checkCancellation()
 
                 let entries = try await mgr.directoryEntries(atPath: normalizedPath)
@@ -312,11 +339,27 @@ public actor AMSMB2Client: SMBClientProtocol {
                 throw CancellationError()
             } catch {
                 if Task.isCancelled { throw CancellationError() }
-                connectedShare = nil
                 directorySnapshot = nil
                 lastError = error
+
+                if isConnectionResetError(error) {
+                    connectedShare = nil
+                    try? await manager?.disconnectShare(gracefully: false)
+                    manager = nil
+                }
+
+                if !isSpinUpOrTransientError(error) {
+                    connectedShare = nil
+                    throw mapError(error, share: share)
+                }
+
                 if attempt < maxAttempts {
-                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    // Escalating backoff for spinning mechanical drive wake-up (1.5s, 3.0s, 4.5s)
+                    let backoffSeconds = Double(attempt) * 1.5
+                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: backoffNs)
+                } else {
+                    connectedShare = nil
                 }
             }
         }
@@ -325,14 +368,15 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private func performReadFileData(share: String, path: String, maxBytes: Int64?) async throws -> Data {
-        let maxAttempts = 2
+        let maxAttempts = 4
         var lastError: Error?
         let normalizedPath = Self.normalizeRelativePath(path)
 
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             do {
-                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
+                let forceReconnect = attempt > 2 || (lastError != nil && isConnectionResetError(lastError!))
+                let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
                 try Task.checkCancellation()
 
                 if let maxBytes, maxBytes > 0 {
@@ -349,10 +393,25 @@ public actor AMSMB2Client: SMBClientProtocol {
                 throw CancellationError()
             } catch {
                 if Task.isCancelled { throw CancellationError() }
-                connectedShare = nil
                 lastError = error
+
+                if isConnectionResetError(error) {
+                    connectedShare = nil
+                    try? await manager?.disconnectShare(gracefully: false)
+                    manager = nil
+                }
+
+                if !isSpinUpOrTransientError(error) {
+                    connectedShare = nil
+                    throw mapError(error, share: share)
+                }
+
                 if attempt < maxAttempts {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    let backoffSeconds = Double(attempt) * 1.5
+                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: backoffNs)
+                } else {
+                    connectedShare = nil
                 }
             }
         }
@@ -365,13 +424,13 @@ public actor AMSMB2Client: SMBClientProtocol {
         var lastError: Error?
         let normalizedPath = Self.normalizeRelativePath(path)
 
-        // Retry with linear backoff. Retries force a full reconnect because libsmb2 sessions that
-        // timed out or were dropped by the server stay unusable until the share is re-mounted.
+        // Retry with linear backoff. Retries force a full reconnect when connection is dropped or on attempt > 2.
         // Cancellation is never retried and is always rethrown as `CancellationError`.
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             do {
-                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
+                let forceReconnect = attempt > 2 || (lastError != nil && isConnectionResetError(lastError!))
+                let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
                 try Task.checkCancellation()
 
                 let end = offset + Int64(length)
@@ -385,11 +444,25 @@ public actor AMSMB2Client: SMBClientProtocol {
                 throw CancellationError()
             } catch {
                 if Task.isCancelled { throw CancellationError() }
-                connectedShare = nil
                 lastError = error
+
+                if isConnectionResetError(error) {
+                    connectedShare = nil
+                    try? await manager?.disconnectShare(gracefully: false)
+                    manager = nil
+                }
+
+                if !isSpinUpOrTransientError(error) {
+                    connectedShare = nil
+                    throw mapError(error, share: share)
+                }
+
                 if attempt < maxAttempts {
-                    let backoffNs = UInt64(attempt) * 250_000_000
+                    let backoffSeconds = Double(attempt) * 1.0
+                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
                     try? await Task.sleep(nanoseconds: backoffNs)
+                } else {
+                    connectedShare = nil
                 }
             }
         }
@@ -398,16 +471,44 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private func performFileSize(share: String, path: String) async throws -> Int64 {
-        do {
-            let mgr = try await ensureConnected(to: share, forceReconnect: false)
-            let normalizedPath = Self.normalizeRelativePath(path)
-            return try await mgr.fileSize(atPath: normalizedPath)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            connectedShare = nil
-            throw mapError(error, share: share)
+        let maxAttempts = 3
+        var lastError: Error?
+        let normalizedPath = Self.normalizeRelativePath(path)
+
+        for attempt in 1...maxAttempts {
+            try Task.checkCancellation()
+            do {
+                let forceReconnect = attempt > 2 || (lastError != nil && isConnectionResetError(lastError!))
+                let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
+                return try await mgr.fileSize(atPath: normalizedPath)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                lastError = error
+
+                if isConnectionResetError(error) {
+                    connectedShare = nil
+                    try? await manager?.disconnectShare(gracefully: false)
+                    manager = nil
+                }
+
+                if !isSpinUpOrTransientError(error) {
+                    connectedShare = nil
+                    throw mapError(error, share: share)
+                }
+
+                if attempt < maxAttempts {
+                    let backoffSeconds = Double(attempt) * 1.0
+                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: backoffNs)
+                } else {
+                    connectedShare = nil
+                }
+            }
         }
+
+        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performDownloadFile(
@@ -416,7 +517,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         to localURL: URL,
         progress: (@Sendable (Int64, Int64) -> Bool)?
     ) async throws {
-        let maxAttempts = 2
+        let maxAttempts = 3
         var lastError: Error?
         let normalizedPath = Self.normalizeRelativePath(path)
         let directoryURL = localURL.deletingLastPathComponent()
@@ -431,12 +532,13 @@ public actor AMSMB2Client: SMBClientProtocol {
             )
 
             do {
+                let forceReconnect = attempt > 2 || (lastError != nil && isConnectionResetError(lastError!))
                 try await performSingleDownloadAttempt(
                     share: share,
                     normalizedPath: normalizedPath,
                     tempURL: tempURL,
                     destinationURL: localURL,
-                    forceReconnect: attempt > 1,
+                    forceReconnect: forceReconnect,
                     progress: progress
                 )
                 return
@@ -448,10 +550,25 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if let posix = error as? POSIXError, posix.code == .ECANCELED {
                     throw CancellationError()
                 }
-                connectedShare = nil
                 lastError = error
+
+                if isConnectionResetError(error) {
+                    connectedShare = nil
+                    try? await manager?.disconnectShare(gracefully: false)
+                    manager = nil
+                }
+
+                if !isSpinUpOrTransientError(error) {
+                    connectedShare = nil
+                    throw mapError(error, share: share)
+                }
+
                 if attempt < maxAttempts {
-                    try await Task.sleep(nanoseconds: 250_000_000)
+                    let backoffSeconds = Double(attempt) * 1.0
+                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
+                    try await Task.sleep(nanoseconds: backoffNs)
+                } else {
+                    connectedShare = nil
                 }
             }
         }
@@ -731,8 +848,83 @@ public actor AMSMB2Client: SMBClientProtocol {
         guard let created = SMB2Manager(url: url, credential: credential) else {
             throw SMBError.unreachable(server.host)
         }
-        created.timeout = 20.0
+        // Allow up to 60 seconds to accommodate idle/sleeping mechanical hard drives spinning up.
+        created.timeout = 60.0
         return AMSMB2SessionAdapter(manager: created)
+    }
+
+    /// Determines whether an error indicates a severed connection, dropped socket, or reset session.
+    private func isConnectionResetError(_ error: Error) -> Bool {
+        if let posix = error as? POSIXError {
+            switch posix.code {
+            case .ECONNRESET, .ECONNABORTED, .ENOTCONN, .EPIPE, .ENETRESET, .ESHUTDOWN, .EHOSTDOWN, .EHOSTUNREACH, .ENETUNREACH:
+                return true
+            default:
+                break
+            }
+        }
+        let desc = error.localizedDescription.lowercased()
+        if desc.contains("connection reset") ||
+           desc.contains("broken pipe") ||
+           desc.contains("not connected") ||
+           desc.contains("status_connection_reset") ||
+           desc.contains("status_connection_disconnected") ||
+           desc.contains("status_network_name_deleted") ||
+           desc.contains("status_user_session_deleted") ||
+           desc.contains("0xc000020d") ||
+           desc.contains("0xc000020c") ||
+           desc.contains("0xc00000c9") ||
+           desc.contains("0xc0000203") {
+            return true
+        }
+        return false
+    }
+
+    /// Determines whether an SMB error is transient or caused by an idle drive spinning up,
+    /// so the operation should be retried with escalating backoff before giving up.
+    private func isSpinUpOrTransientError(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let smbError = error as? SMBError {
+            switch smbError {
+            case .timeout, .unreachable:
+                return true
+            case .badCredentials, .noShares, .shareNotFound:
+                return false
+            case .unknown(let desc):
+                let lower = desc.lowercased()
+                return Self.containsSpinUpKeyword(lower)
+            }
+        }
+        if let posix = error as? POSIXError {
+            switch posix.code {
+            case .ETIMEDOUT, .EIO, .EAGAIN, .EBUSY, .EINTR:
+                return true
+            case .EACCES, .EPERM, .EAUTH, .ENOENT:
+                return false
+            default:
+                break
+            }
+        }
+        if isConnectionResetError(error) {
+            return true
+        }
+        let desc = error.localizedDescription.lowercased()
+        return Self.containsSpinUpKeyword(desc)
+    }
+
+    private static func containsSpinUpKeyword(_ desc: String) -> Bool {
+        if desc.contains("query directory failed") { return true }
+        if desc.contains("status_io_timeout") || desc.contains("0xc00000b5") || desc.contains("0x000000b5") { return true }
+        if desc.contains("status_device_not_ready") || desc.contains("0xc00000a3") || desc.contains("0x000000a3") { return true }
+        if desc.contains("status_device_busy") || desc.contains("0xc000009a") || desc.contains("0x0000009a") { return true }
+        if desc.contains("status_device_off_line") || desc.contains("0xc000003a") || desc.contains("0x0000003a") { return true }
+        if desc.contains("status_device_data_error") || desc.contains("0xc000009c") || desc.contains("0x0000009c") { return true }
+        if desc.contains("status_unsuccessful") || desc.contains("0xc0000001") || desc.contains("0x00000001") { return true }
+        if desc.contains("status_logical_disk_error") || desc.contains("0xc00000b7") { return true }
+        if desc.contains("timed out") || desc.contains("timeout") { return true }
+        if desc.contains("not ready") || desc.contains("busy") || desc.contains("spin") { return true }
+        if desc.contains("input/output error") || desc.contains("i/o error") { return true }
+        return false
     }
 
     /// Atomically publishes a finished download. `replaceItemAt` swaps an existing file in one step,
@@ -777,7 +969,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         if desc.contains("auth") || desc.contains("logon") || desc.contains("credential") || desc.contains("permission") {
             return .badCredentials
         }
-        if desc.contains("timed out") || desc.contains("timeout") {
+        if desc.contains("timed out") || desc.contains("timeout") || desc.contains("status_io_timeout") || desc.contains("0xc00000b5") {
             return .timeout
         }
         if desc.contains("connect") || desc.contains("unreachable") || desc.contains("refused") || desc.contains("host") {
