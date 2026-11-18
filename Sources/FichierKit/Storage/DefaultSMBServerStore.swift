@@ -38,9 +38,9 @@ public actor DefaultSMBServerStore: SMBServerStoreProtocol {
 
     /// Stores or updates an SMB connection record and persists its password cleanly.
     public func saveServer(_ server: SavedSMBConnection, password: String) async throws {
-        var existing = await loadServers()
         await passwordStore.savePassword(password, for: server.id)
 
+        var existing = await loadServers()
         existing.removeAll { $0.id == server.id }
         existing.insert(server, at: 0)
 
@@ -50,9 +50,9 @@ public actor DefaultSMBServerStore: SMBServerStoreProtocol {
 
     /// Removes a saved connection from persistence and clears its credential.
     public func removeServer(_ server: SavedSMBConnection) async throws {
-        var existing = await loadServers()
         await passwordStore.deletePassword(for: server.id)
 
+        var existing = await loadServers()
         existing.removeAll { $0.id == server.id }
 
         let data = try JSONEncoder().encode(existing)
@@ -103,7 +103,7 @@ public actor DefaultSMBServerStore: SMBServerStoreProtocol {
                 }
 
                 group.addTask {
-                    try await Task.sleep(nanoseconds: 2_500_000_000)
+                    try await Task.sleep(for: .milliseconds(2500))
                     return .offline
                 }
 

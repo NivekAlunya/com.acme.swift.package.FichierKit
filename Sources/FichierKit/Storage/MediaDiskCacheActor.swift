@@ -23,6 +23,15 @@ public actor MediaDiskCacheActor {
     public init() {}
     
     // MARK: - Atomic Writes & Reads
+
+    /// Reads binary data from the specified file URL isolated on the disk actor.
+    ///
+    /// - Parameter url: The file URL to read.
+    /// - Returns: The data contents if the file exists and is readable, or `nil` otherwise.
+    public func readData(from url: URL) -> Data? {
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        return try? Data(contentsOf: url)
+    }
     
     /// Atomically writes data to the specified destination URL.
     ///

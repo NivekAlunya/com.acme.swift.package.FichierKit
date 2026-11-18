@@ -18,7 +18,6 @@ public actor VLCVideoThumbnailActor {
     private var pendingRequests: [UUID: CheckedContinuation<UIImage?, Never>] = [:]
     private var activeSessions: [UUID: VLCVideoThumbnailSession] = [:]
     private var watchdogTasks: [UUID: Task<Void, Never>] = [:]
-    private var preCancelledSessionIDs: Set<UUID> = []
     private let limiter = SMBVideoThumbnailLimiter(maxConcurrent: 1)
 
     public init() {}
@@ -72,10 +71,12 @@ public actor VLCVideoThumbnailActor {
 
         let sessionID = UUID()
         let session = await VLCVideoThumbnailSession(sessionID: sessionID, owner: self)
+        activeSessions[sessionID] = session
 
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                if self.preCancelledSessionIDs.remove(sessionID) != nil || Task.isCancelled {
+                guard self.activeSessions[sessionID] != nil, !Task.isCancelled else {
+                    self.activeSessions.removeValue(forKey: sessionID)
                     Task {
                         await session.cancel()
                     }
@@ -83,7 +84,6 @@ public actor VLCVideoThumbnailActor {
                     return
                 }
 
-                self.activeSessions[sessionID] = session
                 self.pendingRequests[sessionID] = continuation
 
                 Task {
@@ -116,19 +116,14 @@ public actor VLCVideoThumbnailActor {
 
     private func cancelSession(id: UUID, image: UIImage?) async {
         watchdogTasks.removeValue(forKey: id)?.cancel()
-        guard let continuation = pendingRequests.removeValue(forKey: id) else {
-            preCancelledSessionIDs.insert(id)
-            if let session = activeSessions.removeValue(forKey: id) {
-                await session.cancel()
-            }
+        guard let session = activeSessions.removeValue(forKey: id) else {
             return
         }
 
-        preCancelledSessionIDs.remove(id)
-        if let session = activeSessions.removeValue(forKey: id) {
-            await session.cancel()
+        await session.cancel()
+        if let continuation = pendingRequests.removeValue(forKey: id) {
+            continuation.resume(returning: image)
         }
-        continuation.resume(returning: image)
     }
     #else
     public init() {}

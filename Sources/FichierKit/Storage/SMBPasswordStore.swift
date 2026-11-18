@@ -20,8 +20,6 @@ public actor SMBPasswordStore {
 
     /// Saves or updates a password in the Keychain for the given account identifier.
     public func savePassword(_ password: String, for account: String) {
-        inMemoryFallback[account] = password
-
         let query = baseQuery(for: account)
         let attributes: [String: Any] = [
             kSecValueData as String: Data(password.utf8),
@@ -34,7 +32,13 @@ public actor SMBPasswordStore {
             let inserted = query.merging(attributes) { _, new in new }
             status = SecItemAdd(inserted as CFDictionary, nil)
         }
-        _ = status
+
+        if status == errSecSuccess {
+            inMemoryFallback.removeValue(forKey: account)
+        } else {
+            // Retain in-memory fallback only when Keychain persistence fails (e.g. unsigned test environments)
+            inMemoryFallback[account] = password
+        }
     }
 
     /// Loads a stored password from the Keychain or in-memory fallback.
@@ -51,7 +55,13 @@ public actor SMBPasswordStore {
             return string
         }
 
-        return inMemoryFallback[account]
+        // Only fall back to in-memory store if the credential is genuinely absent or Keychain is unavailable
+        if status == errSecItemNotFound || status == errSecNotAvailable {
+            return inMemoryFallback[account]
+        }
+
+        // Do not mask access control failures (such as errSecInteractionNotAllowed) with in-memory fallbacks
+        return nil
     }
 
     /// Deletes stored credentials from the Keychain and in-memory fallback.
