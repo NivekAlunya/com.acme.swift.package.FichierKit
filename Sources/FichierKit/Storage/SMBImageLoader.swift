@@ -191,7 +191,7 @@ public actor SMBImageLoader {
         fullImageCache.removeAllObjects()
     }
 
-    private nonisolated static func decodeDownsampledImage(from data: Data, maxPixelSize: CGFloat) -> UIImage? {
+    public nonisolated static func decodeDownsampledImage(from data: Data, maxPixelSize: CGFloat) -> UIImage? {
         let sourceOptions: [CFString: Any] = [
             kCGImageSourceShouldCache: false
         ]
@@ -210,6 +210,20 @@ public actor SMBImageLoader {
             return UIImage(cgImage: cgImage)
         }
         return UIImage(data: data)
+    }
+
+    public nonisolated static func decodeDownsampledImage(from url: URL, maxPixelSize: CGFloat) -> UIImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return UIImage(contentsOfFile: url.path)
+        }
+        return UIImage(cgImage: cgImage)
     }
     #else
     public func loadThumbnail(
