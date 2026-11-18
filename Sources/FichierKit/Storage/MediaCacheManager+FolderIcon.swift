@@ -55,8 +55,10 @@ extension MediaCacheManager {
         return String(normalized[..<slash])
     }
 
+    private static let pathSlashSet = CharacterSet(charactersIn: "/")
+
     private static func normalizedFolderPath(_ path: String) -> String {
-        path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        path.trimmingCharacters(in: pathSlashSet)
     }
 
     #if canImport(UIKit)

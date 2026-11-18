@@ -15,8 +15,7 @@ extension MediaSourceItem {
         if let smbShare, let smbPath {
             return (smbShare, smbPath, sourceID ?? "")
         }
-        guard let sourceID else { return nil }
-        return ("", path, sourceID)
+        return ("", path, sourceID ?? "")
     }
 
     #if canImport(UIKit)

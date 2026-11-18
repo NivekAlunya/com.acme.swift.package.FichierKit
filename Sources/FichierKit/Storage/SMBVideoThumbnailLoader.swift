@@ -52,7 +52,8 @@ public actor SMBVideoThumbnailLoader {
         }
 
         let maxDimension = Self.canonicalDimension(for: targetSize)
-        let cacheKey = "\(sourceID)|\(share)/\(path)|vidthumb|\(Int(maxDimension))"
+        let normalizedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let cacheKey = "\(sourceID)|\(share)/\(normalizedPath)|vidthumb|\(Int(maxDimension))"
         if let cached = cachedThumbnail(forKey: cacheKey) {
             return cached
         }
@@ -138,7 +139,8 @@ public actor SMBVideoThumbnailLoader {
     /// Checks if a thumbnail is already cached in memory for an SMB video item.
     public func hasCachedThumbnail(sourceID: String, share: String, path: String, targetSize: CGSize) -> Bool {
         let maxDimension = Self.canonicalDimension(for: targetSize)
-        let cacheKey = "\(sourceID)|\(share)/\(path)|vidthumb|\(Int(maxDimension))"
+        let normalizedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let cacheKey = "\(sourceID)|\(share)/\(normalizedPath)|vidthumb|\(Int(maxDimension))"
         return cachedThumbnail(forKey: cacheKey) != nil
     }
 

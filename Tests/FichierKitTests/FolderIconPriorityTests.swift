@@ -149,8 +149,20 @@ struct FolderIconPriorityTests {
             isVideo: true
         )
 
-        // Short wait to ensure video write completes
-        try? await Task.sleep(for: .milliseconds(50))
+        let videoKey = manager.folderIconKey(
+            shareName: shareName,
+            folderPath: folderPath,
+            isVideo: true
+        )
+        var videoSaved = false
+        for _ in 0..<40 {
+            if manager.hasThumbnail(for: videoKey) {
+                videoSaved = true
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(15))
+        }
+        #expect(videoSaved)
 
         let resolvedStillImage = await manager.folderIcon(folderPath: folderPath, shareName: shareName)
         #expect(resolvedStillImage != nil)
