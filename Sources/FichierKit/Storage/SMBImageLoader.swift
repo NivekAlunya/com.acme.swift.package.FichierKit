@@ -90,6 +90,20 @@ public actor SMBImageLoader {
         thumbnailCache.object(forKey: key as NSString)
     }
 
+    /// Checks if a thumbnail is already cached in memory for an SMB image item.
+    public func hasCachedThumbnail(sourceID: String, share: String, path: String, targetSize: CGSize) -> Bool {
+        let maxPixelSize = Self.canonicalThumbnailDimension(for: targetSize)
+        let cacheKey = "\(sourceID)|\(share)/\(path)|thumb|\(Int(maxPixelSize))"
+        return cachedThumbnail(forKey: cacheKey) != nil
+    }
+
+    /// Checks if a thumbnail is already cached in memory for a local file URL.
+    public func hasCachedLocalThumbnail(url: URL, targetSize: CGSize) -> Bool {
+        let maxPixelSize = Self.canonicalThumbnailDimension(for: targetSize)
+        let cacheKey = "local|\(url.standardizedFileURL.path)|thumb|\(Int(maxPixelSize))"
+        return cachedThumbnail(forKey: cacheKey) != nil
+    }
+
     private func storeThumbnail(_ image: UIImage, forKey key: String) {
         let estimatedCost = Int(image.size.width * image.size.height * 4)
         thumbnailCache.setObject(image, forKey: key as NSString, cost: max(1, estimatedCost))
