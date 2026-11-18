@@ -32,4 +32,21 @@ public struct SavedSMBConnection: Identifiable, Codable, Hashable, Sendable {
             return host
         }
     }
+
+    /// Standard UserDefaults storage key for persisted SMB server connections.
+    public static let storageKey = "SavedSMBServerConnections_v2"
+
+    /// Decodes a list of saved SMB connections from binary JSON data, sorted by `lastConnected` descending.
+    public static func decodeList(from data: Data?) -> [SavedSMBConnection] {
+        guard let data else { return [] }
+        guard let decoded = try? JSONDecoder().decode([SavedSMBConnection].self, from: data) else {
+            return []
+        }
+        return decoded.sorted { $0.lastConnected > $1.lastConnected }
+    }
+
+    /// Encodes a list of saved SMB connections to binary JSON data.
+    public static func encodeList(_ connections: [SavedSMBConnection]) throws -> Data {
+        try JSONEncoder().encode(connections)
+    }
 }

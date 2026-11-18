@@ -13,7 +13,6 @@ public actor DefaultSMBServerStore: SMBServerStoreProtocol {
 
     private let userDefaults: UserDefaults
     private let passwordStore: SMBPasswordStore
-    private let savedConnectionsKey = "SavedSMBServerConnections_v2"
 
     public init(
         userDefaults: UserDefaults = .standard,
@@ -25,15 +24,7 @@ public actor DefaultSMBServerStore: SMBServerStoreProtocol {
 
     /// Loads and decodes saved connections sorted with most recently connected first.
     public func loadServers() async -> [SavedSMBConnection] {
-        guard let data = userDefaults.data(forKey: savedConnectionsKey) else {
-            return []
-        }
-        do {
-            let decoded = try JSONDecoder().decode([SavedSMBConnection].self, from: data)
-            return decoded.sorted { $0.lastConnected > $1.lastConnected }
-        } catch {
-            return []
-        }
+        SavedSMBConnection.decodeList(from: userDefaults.data(forKey: SavedSMBConnection.storageKey))
     }
 
     /// Stores or updates an SMB connection record and persists its password cleanly.
@@ -44,8 +35,8 @@ public actor DefaultSMBServerStore: SMBServerStoreProtocol {
         existing.removeAll { $0.id == server.id }
         existing.insert(server, at: 0)
 
-        let data = try JSONEncoder().encode(existing)
-        userDefaults.set(data, forKey: savedConnectionsKey)
+        let data = try SavedSMBConnection.encodeList(existing)
+        userDefaults.set(data, forKey: SavedSMBConnection.storageKey)
     }
 
     /// Removes a saved connection from persistence and clears its credential.
@@ -55,8 +46,8 @@ public actor DefaultSMBServerStore: SMBServerStoreProtocol {
         var existing = await loadServers()
         existing.removeAll { $0.id == server.id }
 
-        let data = try JSONEncoder().encode(existing)
-        userDefaults.set(data, forKey: savedConnectionsKey)
+        let data = try SavedSMBConnection.encodeList(existing)
+        userDefaults.set(data, forKey: SavedSMBConnection.storageKey)
     }
 
     /// Retrieves the stored password for a given server.

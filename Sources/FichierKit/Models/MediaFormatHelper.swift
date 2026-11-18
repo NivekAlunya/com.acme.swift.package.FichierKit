@@ -33,6 +33,26 @@ public enum MediaFormatHelper: Sendable {
         }
     }
 
+    /// Formats a playback timestamp in seconds into `MM:SS` or `HH:MM:SS`.
+    public static func formatTimestamp(
+        _ seconds: Double,
+        zeroPaddedHours: Bool = true,
+        zeroPaddedMinutes: Bool = true
+    ) -> String {
+        guard seconds.isFinite && !seconds.isNaN && seconds > 0 && seconds < Double(Int.max) else {
+            return zeroPaddedMinutes ? "00:00" : "0:00"
+        }
+        let total = Int(seconds.rounded())
+        let s = total % 60
+        let m = (total / 60) % 60
+        let h = total / 3600
+        if h > 0 {
+            return zeroPaddedHours ? String(format: "%02d:%02d:%02d", h, m, s) : String(format: "%d:%02d:%02d", h, m, s)
+        } else {
+            return zeroPaddedMinutes ? String(format: "%02d:%02d", m, s) : String(format: "%d:%02d", m, s)
+        }
+    }
+
     /// Formats image width and height into a dimensions descriptor string (e.g. "3840 × 2160").
     public static func formatDimensions(width: Int, height: Int) -> String {
         guard width > 0, height > 0 else { return "" }

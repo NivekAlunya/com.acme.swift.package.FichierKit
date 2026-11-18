@@ -79,21 +79,17 @@ extension MediaCacheManager {
         await diskActor.evictFilesIfNeeded(in: thumbnailsDirectory, limitBytes: thumbLimit)
     }
     
-    /// Evicts oldest cached video files (FIFO) if total video cache size exceeds `limitBytes` (default 2 GB).
-    ///
-    /// - Parameters:
-    ///   - limitBytes: Maximum allowed aggregate size in bytes.
-    ///   - protectedURLs: File URLs that must be shielded from eviction.
-    public func evictVideosIfNeeded(limitBytes: Int64 = 2_000_000_000, keeping protectedURLs: Set<URL> = []) {
+    /// Evicts oldest cached files (FIFO) within a directory if aggregate size exceeds `limitBytes`.
+    private func evictFiles(in directory: URL, limitBytes: Int64, keeping protectedURLs: Set<URL> = []) {
         guard let enumerator = fileManager.enumerator(
-            at: videosDirectory,
+            at: directory,
             includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else { return }
-        
-        var videoFiles: [(url: URL, size: Int64, date: Date)] = []
+
+        var files: [(url: URL, size: Int64, date: Date)] = []
         var totalSize: Int64 = 0
-        
+
         for case let fileURL as URL in enumerator {
             if fileURL.pathExtension == "part" {
                 try? fileManager.removeItem(at: fileURL)
@@ -104,15 +100,14 @@ extension MediaCacheManager {
             let fileSize = Int64(size)
             let date = values.contentModificationDate ?? Date.distantPast
             totalSize += fileSize
-            videoFiles.append((url: fileURL, size: fileSize, date: date))
+            files.append((url: fileURL, size: fileSize, date: date))
         }
-        
+
         guard totalSize > limitBytes else { return }
-        
-        // Sort oldest first (FIFO eviction)
-        videoFiles.sort { $0.date < $1.date }
-        
-        for file in videoFiles {
+
+        files.sort { $0.date < $1.date }
+
+        for file in files {
             if totalSize <= limitBytes { break }
             if protectedURLs.contains(file.url) { continue }
             do {
@@ -122,6 +117,15 @@ extension MediaCacheManager {
                 // Ignore failure to remove individual item
             }
         }
+    }
+
+    /// Evicts oldest cached video files (FIFO) if total video cache size exceeds `limitBytes` (default 2 GB).
+    ///
+    /// - Parameters:
+    ///   - limitBytes: Maximum allowed aggregate size in bytes.
+    ///   - protectedURLs: File URLs that must be shielded from eviction.
+    public func evictVideosIfNeeded(limitBytes: Int64 = 2_000_000_000, keeping protectedURLs: Set<URL> = []) {
+        evictFiles(in: videosDirectory, limitBytes: limitBytes, keeping: protectedURLs)
     }
     
     /// Evicts oldest cached document files (FIFO) if total document cache size exceeds `limitBytes` (default 1 GB).
@@ -130,78 +134,12 @@ extension MediaCacheManager {
     ///   - limitBytes: Maximum allowed aggregate size in bytes.
     ///   - protectedURLs: File URLs that must be shielded from eviction.
     public func evictDocumentsIfNeeded(limitBytes: Int64 = 1_000_000_000, keeping protectedURLs: Set<URL> = []) {
-        guard let enumerator = fileManager.enumerator(
-            at: documentsDirectory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return }
-        
-        var docFiles: [(url: URL, size: Int64, date: Date)] = []
-        var totalSize: Int64 = 0
-        
-        for case let fileURL as URL in enumerator {
-            if fileURL.pathExtension == "part" {
-                try? fileManager.removeItem(at: fileURL)
-                continue
-            }
-            guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-                  let size = values.fileSize else { continue }
-            let fileSize = Int64(size)
-            let date = values.contentModificationDate ?? Date.distantPast
-            totalSize += fileSize
-            docFiles.append((url: fileURL, size: fileSize, date: date))
-        }
-        
-        guard totalSize > limitBytes else { return }
-        
-        // Sort oldest first (FIFO eviction)
-        docFiles.sort { $0.date < $1.date }
-        
-        for file in docFiles {
-            if totalSize <= limitBytes { break }
-            if protectedURLs.contains(file.url) { continue }
-            do {
-                try fileManager.removeItem(at: file.url)
-                totalSize -= file.size
-            } catch {
-                // Ignore failure to remove individual item
-            }
-        }
+        evictFiles(in: documentsDirectory, limitBytes: limitBytes, keeping: protectedURLs)
     }
     
     /// Evicts oldest cached thumbnails if aggregate thumbnail cache exceeds `limitBytes` (default 300 MB).
     public func evictThumbnailsIfNeeded(limitBytes: Int64 = 300_000_000) {
-        guard let enumerator = fileManager.enumerator(
-            at: thumbnailsDirectory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return }
-        
-        var thumbFiles: [(url: URL, size: Int64, date: Date)] = []
-        var totalSize: Int64 = 0
-        
-        for case let fileURL as URL in enumerator {
-            guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-                  let size = values.fileSize else { continue }
-            let fileSize = Int64(size)
-            let date = values.contentModificationDate ?? Date.distantPast
-            totalSize += fileSize
-            thumbFiles.append((url: fileURL, size: fileSize, date: date))
-        }
-        
-        guard totalSize > limitBytes else { return }
-        
-        thumbFiles.sort { $0.date < $1.date }
-        
-        for file in thumbFiles {
-            if totalSize <= limitBytes { break }
-            do {
-                try fileManager.removeItem(at: file.url)
-                totalSize -= file.size
-            } catch {
-                // Ignore failure to remove individual item
-            }
-        }
+        evictFiles(in: thumbnailsDirectory, limitBytes: limitBytes)
     }
     
     /// Computes aggregate cache size in bytes asynchronously isolated on `MediaDiskCacheActor`.
