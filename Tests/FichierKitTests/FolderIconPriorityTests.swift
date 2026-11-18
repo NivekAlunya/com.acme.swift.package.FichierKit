@@ -13,12 +13,40 @@ import UIKit
 @Suite("Folder Icon Priority & Caching Rules")
 struct FolderIconPriorityTests {
     #if canImport(UIKit)
-    private func createTestImage(color: UIColor = .blue) -> UIImage {
-        let size = CGSize(width: 40, height: 40)
+    private func createTestImage(size: CGSize, color: UIColor) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: size)
         return renderer.image { ctx in
             color.setFill()
             ctx.fill(CGRect(origin: .zero, size: size))
+        }
+    }
+
+    private func waitForIcon(
+        manager: MediaCacheManager,
+        folderPath: String,
+        shareName: String,
+        matchingSize: CGSize? = nil
+    ) async -> UIImage? {
+        for _ in 0..<40 {
+            if let image = await manager.folderIcon(folderPath: folderPath, shareName: shareName) {
+                if let matchingSize {
+                    if image.size == matchingSize { return image }
+                } else {
+                    return image
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(15))
+        }
+        return nil
+    }
+
+    private func cleanup(manager: MediaCacheManager, shareName: String, folderPath: String) {
+        let imgKey = manager.folderIconKey(shareName: shareName, folderPath: folderPath, isVideo: false)
+        let vidKey = manager.folderIconKey(shareName: shareName, folderPath: folderPath, isVideo: true)
+        let legacyKey = manager.legacyFolderIconKey(shareName: shareName, folderPath: folderPath)
+        for key in [imgKey, vidKey, legacyKey] {
+            let fileURL = manager.thumbnailsDirectory.appendingPathComponent("\(key).jpg")
+            try? FileManager.default.removeItem(at: fileURL)
         }
     }
 
@@ -29,7 +57,7 @@ struct FolderIconPriorityTests {
         #expect(MediaCacheManager.parentFolderPath(of: "file.png") == "")
     }
 
-    @Test("Image icon is strictly prioritized over video icon")
+    @Test("Image icon is strictly prioritized over video icon (video linked first)")
     func imagePriorityOverVideo() async {
         let manager = MediaCacheManager.shared
         let folderPath = "test_folder_\(UUID().uuidString)"
@@ -37,8 +65,13 @@ struct FolderIconPriorityTests {
         let childImagePath = "\(folderPath)/image.jpg"
         let childVideoPath = "\(folderPath)/video.mp4"
 
-        let videoImage = createTestImage(color: .red)
-        let photoImage = createTestImage(color: .green)
+        defer { cleanup(manager: manager, shareName: shareName, folderPath: folderPath) }
+
+        let videoSize = CGSize(width: 32, height: 32)
+        let photoSize = CGSize(width: 48, height: 48)
+
+        let videoImage = createTestImage(size: videoSize, color: .red)
+        let photoImage = createTestImage(size: photoSize, color: .green)
 
         // 1. Link video first
         manager.linkFolderIcon(
@@ -48,13 +81,16 @@ struct FolderIconPriorityTests {
             isVideo: true
         )
 
-        // Allow async disk write to complete
-        try? await Task.sleep(for: .milliseconds(80))
+        let resolvedVideo = await waitForIcon(
+            manager: manager,
+            folderPath: folderPath,
+            shareName: shareName,
+            matchingSize: videoSize
+        )
+        #expect(resolvedVideo != nil)
+        #expect(resolvedVideo?.size == videoSize)
 
-        let resolvedVideoOnly = await manager.folderIcon(folderPath: folderPath, shareName: shareName)
-        #expect(resolvedVideoOnly != nil)
-
-        // 2. Link image
+        // 2. Link image later -> image must now take priority
         manager.linkFolderIcon(
             photoImage,
             childPath: childImagePath,
@@ -62,16 +98,71 @@ struct FolderIconPriorityTests {
             isVideo: false
         )
 
-        try? await Task.sleep(for: .milliseconds(80))
-
-        // Image must now be resolved even though video was also linked
-        let resolvedWithImage = await manager.folderIcon(folderPath: folderPath, shareName: shareName)
+        let resolvedWithImage = await waitForIcon(
+            manager: manager,
+            folderPath: folderPath,
+            shareName: shareName,
+            matchingSize: photoSize
+        )
         #expect(resolvedWithImage != nil)
+        #expect(resolvedWithImage?.size == photoSize)
+    }
+
+    @Test("Image icon retains priority when video is linked later")
+    func imageRetainsPriorityOverSubsequentVideo() async {
+        let manager = MediaCacheManager.shared
+        let folderPath = "test_folder_rev_\(UUID().uuidString)"
+        let shareName = "TestShare"
+        let childImagePath = "\(folderPath)/image.jpg"
+        let childVideoPath = "\(folderPath)/video.mp4"
+
+        defer { cleanup(manager: manager, shareName: shareName, folderPath: folderPath) }
+
+        let videoSize = CGSize(width: 32, height: 32)
+        let photoSize = CGSize(width: 48, height: 48)
+
+        let videoImage = createTestImage(size: videoSize, color: .red)
+        let photoImage = createTestImage(size: photoSize, color: .green)
+
+        // 1. Link image first
+        manager.linkFolderIcon(
+            photoImage,
+            childPath: childImagePath,
+            shareName: shareName,
+            isVideo: false
+        )
+
+        let resolvedImage = await waitForIcon(
+            manager: manager,
+            folderPath: folderPath,
+            shareName: shareName,
+            matchingSize: photoSize
+        )
+        #expect(resolvedImage != nil)
+        #expect(resolvedImage?.size == photoSize)
+
+        // 2. Link video later -> photo must still be returned
+        manager.linkFolderIcon(
+            videoImage,
+            childPath: childVideoPath,
+            shareName: shareName,
+            isVideo: true
+        )
+
+        // Short wait to ensure video write completes
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let resolvedStillImage = await manager.folderIcon(folderPath: folderPath, shareName: shareName)
+        #expect(resolvedStillImage != nil)
+        #expect(resolvedStillImage?.size == photoSize)
     }
 
     @Test("MediaSourceItem correctly links image and video icons")
     func mediaSourceItemLinking() async {
         let folderPath = "travel_\(UUID().uuidString)"
+        let manager = MediaCacheManager.shared
+        defer { cleanup(manager: manager, shareName: "Media", folderPath: folderPath) }
+
         let imageItem = MediaSourceItem(
             id: "img1",
             name: "scenery.jpg",
@@ -92,13 +183,20 @@ struct FolderIconPriorityTests {
             smbPath: folderPath
         )
 
-        let testImg = createTestImage(color: .yellow)
+        let testImg = createTestImage(size: CGSize(width: 40, height: 40), color: .yellow)
         imageItem.linkThumbnailAsFolderIcon(testImg)
 
-        try? await Task.sleep(for: .milliseconds(80))
+        var loaded: UIImage?
+        for _ in 0..<40 {
+            if let img = await folderItem.linkedFolderIcon() {
+                loaded = img
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(15))
+        }
 
-        let loaded = await folderItem.linkedFolderIcon()
         #expect(loaded != nil)
+        #expect(loaded?.size == CGSize(width: 40, height: 40))
     }
     #endif
 }

@@ -62,6 +62,9 @@ extension MediaCacheManager {
     #if canImport(UIKit)
     /// Links a child's thumbnail to its parent folder as the folder icon.
     ///
+    /// Automatically downsamples full-resolution inputs to `standardThumbnailDimension` (420px)
+    /// off the main thread before encoding to prevent disk bloat and memory spikes.
+    ///
     /// - Parameters:
     ///   - image: Thumbnail of a direct child (image or video).
     ///   - childPath: Full path of the child item.
@@ -82,10 +85,32 @@ extension MediaCacheManager {
             connectionID: connectionID,
             isVideo: isVideo
         )
-        saveThumbnailAsync(image, for: key)
+        Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let maxDim = max(image.size.width, image.size.height)
+            let thumbnailToSave: UIImage
+            if maxDim > Self.standardThumbnailDimension {
+                let scale = Self.standardThumbnailDimension / maxDim
+                let targetSize = CGSize(
+                    width: max(1, (image.size.width * scale).rounded()),
+                    height: max(1, (image.size.height * scale).rounded())
+                )
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = 1.0
+                let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+                thumbnailToSave = renderer.image { _ in
+                    image.draw(in: CGRect(origin: .zero, size: targetSize))
+                }
+            } else {
+                thumbnailToSave = image
+            }
+            self.saveThumbnailAsync(thumbnailToSave, for: key)
+        }
     }
 
     /// Loads the icon thumbnail linked to a folder, strictly prioritizing images over videos.
+    ///
+    /// Performs disk reads off the main thread to prevent scrolling hitches.
     ///
     /// - Parameters:
     ///   - folderPath: Full path of the folder.
@@ -93,21 +118,39 @@ extension MediaCacheManager {
     ///   - connectionID: Scoped connection identifier.
     /// - Returns: Image thumbnail if available, or `nil`.
     public func folderIcon(folderPath: String, shareName: String, connectionID: String = "") async -> UIImage? {
-        // Priority 1: Image thumbnail
-        let imageKey = folderIconKey(shareName: shareName, folderPath: folderPath, connectionID: connectionID, isVideo: false)
-        if let imageIcon = await getThumbnailAsync(for: imageKey) {
-            return imageIcon
-        }
+        let imageKey = folderIconKey(
+            shareName: shareName,
+            folderPath: folderPath,
+            connectionID: connectionID,
+            isVideo: false
+        )
+        let videoKey = folderIconKey(
+            shareName: shareName,
+            folderPath: folderPath,
+            connectionID: connectionID,
+            isVideo: true
+        )
+        let legacyKey = legacyFolderIconKey(
+            shareName: shareName,
+            folderPath: folderPath,
+            connectionID: connectionID
+        )
 
-        // Priority 2: Video thumbnail
-        let videoKey = folderIconKey(shareName: shareName, folderPath: folderPath, connectionID: connectionID, isVideo: true)
-        if let videoIcon = await getThumbnailAsync(for: videoKey) {
-            return videoIcon
-        }
-
-        // Priority 3: Legacy fallback
-        let legacyKey = legacyFolderIconKey(shareName: shareName, folderPath: folderPath, connectionID: connectionID)
-        return await getThumbnailAsync(for: legacyKey)
+        return await Task.detached(priority: .userInitiated) { [weak self] () -> UIImage? in
+            guard let self, !Task.isCancelled else { return nil }
+            // Priority 1: Image thumbnail
+            if let imageIcon = self.getThumbnail(for: imageKey) {
+                return imageIcon
+            }
+            guard !Task.isCancelled else { return nil }
+            // Priority 2: Video thumbnail
+            if let videoIcon = self.getThumbnail(for: videoKey) {
+                return videoIcon
+            }
+            guard !Task.isCancelled else { return nil }
+            // Priority 3: Legacy fallback
+            return self.getThumbnail(for: legacyKey)
+        }.value
     }
     #endif
 }
