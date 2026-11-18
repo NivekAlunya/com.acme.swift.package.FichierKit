@@ -162,7 +162,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 connectedShare = nil
                 lastError = error
 
-                if isConnectionResetError(error) {
+                if Self.isConnectionResetError(error) {
                     try? await manager?.disconnectShare(gracefully: false)
                     manager = nil
                 }
@@ -265,7 +265,7 @@ public actor AMSMB2Client: SMBClientProtocol {
             do {
                 // On initial retry, preserve tree connection so spinning media is not disrupted.
                 // Reconnect only after multiple failures or when socket is reset.
-                let forceReconnect = attempt > 2 || (lastError.map(isConnectionResetError) ?? false)
+                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
                 let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
                 try Task.checkCancellation()
 
@@ -342,7 +342,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 directorySnapshot = nil
                 lastError = error
 
-                if isConnectionResetError(error) {
+                if Self.isConnectionResetError(error) {
                     connectedShare = nil
                     try? await manager?.disconnectShare(gracefully: false)
                     manager = nil
@@ -375,7 +375,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             do {
-                let forceReconnect = attempt > 2 || (lastError.map(isConnectionResetError) ?? false)
+                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
                 let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
                 try Task.checkCancellation()
 
@@ -395,7 +395,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if Task.isCancelled { throw CancellationError() }
                 lastError = error
 
-                if isConnectionResetError(error) {
+                if Self.isConnectionResetError(error) {
                     connectedShare = nil
                     try? await manager?.disconnectShare(gracefully: false)
                     manager = nil
@@ -429,7 +429,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             do {
-                let forceReconnect = attempt > 2 || (lastError.map(isConnectionResetError) ?? false)
+                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
                 let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
                 try Task.checkCancellation()
 
@@ -446,7 +446,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if Task.isCancelled { throw CancellationError() }
                 lastError = error
 
-                if isConnectionResetError(error) {
+                if Self.isConnectionResetError(error) {
                     connectedShare = nil
                     try? await manager?.disconnectShare(gracefully: false)
                     manager = nil
@@ -478,7 +478,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             do {
-                let forceReconnect = attempt > 2 || (lastError.map(isConnectionResetError) ?? false)
+                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
                 let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
                 return try await mgr.fileSize(atPath: normalizedPath)
             } catch is CancellationError {
@@ -487,7 +487,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 if Task.isCancelled { throw CancellationError() }
                 lastError = error
 
-                if isConnectionResetError(error) {
+                if Self.isConnectionResetError(error) {
                     connectedShare = nil
                     try? await manager?.disconnectShare(gracefully: false)
                     manager = nil
@@ -532,7 +532,7 @@ public actor AMSMB2Client: SMBClientProtocol {
             )
 
             do {
-                let forceReconnect = attempt > 2 || (lastError.map(isConnectionResetError) ?? false)
+                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
                 try await performSingleDownloadAttempt(
                     share: share,
                     normalizedPath: normalizedPath,
@@ -552,7 +552,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 }
                 lastError = error
 
-                if isConnectionResetError(error) {
+                if Self.isConnectionResetError(error) {
                     connectedShare = nil
                     try? await manager?.disconnectShare(gracefully: false)
                     manager = nil
@@ -854,7 +854,7 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     /// Determines whether an error indicates a severed connection, dropped socket, or reset session.
-    private func isConnectionResetError(_ error: Error) -> Bool {
+    private static func isConnectionResetError(_ error: Error) -> Bool {
         if let posix = error as? POSIXError {
             switch posix.code {
             case .ECONNRESET, .ECONNABORTED, .ENOTCONN, .EPIPE, .ENETRESET, .ESHUTDOWN, .EHOSTDOWN, .EHOSTUNREACH, .ENETUNREACH:
@@ -905,7 +905,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 break
             }
         }
-        if isConnectionResetError(error) {
+        if Self.isConnectionResetError(error) {
             return true
         }
         let desc = error.localizedDescription.lowercased()
