@@ -90,9 +90,13 @@ public protocol PlayerEngine: AnyObject, Sendable {
 
     /// Releases hardware decoders and frees streaming buffers.
     func tearDown()
+
+    /// Clears any registered event callbacks.
+    func clearCallbacks()
 }
 
 public extension PlayerEngine {
+    func clearCallbacks() {}
     func jump(by deltaSeconds: Double) {
         guard deltaSeconds.isFinite, deltaSeconds != 0 else { return }
         let target = duration > 0

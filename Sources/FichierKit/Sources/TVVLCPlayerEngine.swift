@@ -424,6 +424,16 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         onTracksChanged?()
     }
 
+    public func clearCallbacks() {
+        onPlaybackEnded = nil
+        onError = nil
+        onStateUpdate = nil
+        onTimeUpdate = nil
+        onDurationUpdate = nil
+        onTracksChanged = nil
+        onChaptersChanged = nil
+    }
+
     public func tearDown() {
         scrubThrottleTask?.cancel()
         scrubThrottleTask = nil
