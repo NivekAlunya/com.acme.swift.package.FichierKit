@@ -6,6 +6,7 @@
 import Foundation
 
 /// Actor-isolated store persisting video resume timestamps in `UserDefaults`.
+@available(*, deprecated, message: "Use VideoPlaybackStore.shared instead")
 public actor DefaultVideoPlaybackStore: VideoPlaybackStoreProtocol {
     public static let shared = DefaultVideoPlaybackStore()
 

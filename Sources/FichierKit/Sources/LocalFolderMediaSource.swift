@@ -138,18 +138,7 @@ public final class LocalFolderMediaSource: MediaSource, Sendable {
             )
         }
 
-        guard SupportedMediaTypes.isSupported(extension: ext) else { return nil }
-
-        let itemType: MediaItemType
-        if SupportedMediaTypes.isVideo(extension: ext) {
-            itemType = .video
-        } else {
-            #if !os(tvOS)
-            itemType = SupportedMediaTypes.documentExtensions.contains(ext) ? .document : .image
-            #else
-            itemType = .image
-            #endif
-        }
+        guard let itemType = MediaItemType.from(extension: ext) else { return nil }
 
         return MediaSourceItem(
             id: "\(id)::\(relativePath)",

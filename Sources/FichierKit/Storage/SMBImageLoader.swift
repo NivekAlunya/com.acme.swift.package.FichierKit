@@ -6,6 +6,7 @@
 
 import Foundation
 import ImageIO
+import os
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -14,6 +15,7 @@ import UIKit
 /// to comply with tvOS storage constraints while maintaining smooth scrolling and 4K quality.
 public actor SMBImageLoader {
     public static let shared = SMBImageLoader()
+    private static let logger = Logger(subsystem: "com.acme.ios.fichierkit", category: "imageLoader")
 
     #if canImport(UIKit)
     private let thumbnailCache: NSCache<NSString, UIImage> = {
@@ -63,27 +65,37 @@ public actor SMBImageLoader {
             return nil
         }
 
-        return try? await downloadLimiter.withPermit {
-            guard !Task.isCancelled else { return nil as UIImage? }
-            if let cached = await self.cachedThumbnail(forKey: cacheKey) {
-                return cached
-            }
+        do {
+            return try await downloadLimiter.withPermit {
+                guard !Task.isCancelled else { return nil as UIImage? }
+                if let cached = await self.cachedThumbnail(forKey: cacheKey) {
+                    return cached
+                }
 
-            guard let data = try? await sharesSource.client.readFileData(
-                share: share,
-                path: path,
-                maxBytes: self.maxThumbnailDownloadBytes
-            ) else {
-                return nil
-            }
+                let data: Data
+                do {
+                    data = try await sharesSource.client.readFileData(
+                        share: share,
+                        path: path,
+                        maxBytes: self.maxThumbnailDownloadBytes
+                    )
+                } catch {
+                    Self.logger.error("Failed to read thumbnail data for \(share)/\(path): \(error.localizedDescription)")
+                    return nil
+                }
 
-            guard !Task.isCancelled, !data.isEmpty else { return nil }
-            guard let decoded = Self.decodeDownsampledImage(from: data, maxPixelSize: maxPixelSize) else {
-                return nil
-            }
+                guard !Task.isCancelled, !data.isEmpty else { return nil }
+                guard let decoded = Self.decodeDownsampledImage(from: data, maxPixelSize: maxPixelSize) else {
+                    Self.logger.warning("Failed to decode downsampled image from \(data.count) bytes for \(path)")
+                    return nil
+                }
 
-            await self.storeThumbnail(decoded, forKey: cacheKey)
-            return decoded
+                await self.storeThumbnail(decoded, forKey: cacheKey)
+                return decoded
+            }
+        } catch {
+            Self.logger.error("Thumbnail permit acquisition failed for \(path): \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -132,10 +144,17 @@ public actor SMBImageLoader {
             return cached
         }
 
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-              !Task.isCancelled,
-              !data.isEmpty,
-              let decoded = Self.decodeDownsampledImage(from: data, maxPixelSize: maxPixelSize) else {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url, options: .mappedIfSafe)
+        } catch {
+            Self.logger.error("Failed to read local image data from \(url.path): \(error.localizedDescription)")
+            return nil
+        }
+
+        guard !Task.isCancelled, !data.isEmpty else { return nil }
+        guard let decoded = Self.decodeDownsampledImage(from: data, maxPixelSize: maxPixelSize) else {
+            Self.logger.warning("Failed to decode local image at \(url.path)")
             return nil
         }
 
@@ -167,16 +186,21 @@ public actor SMBImageLoader {
             return nil
         }
 
-        guard let data = try? await sharesSource.client.readFileData(
-            share: share,
-            path: path,
-            maxBytes: maxFullImageDownloadBytes
-        ) else {
+        let data: Data
+        do {
+            data = try await sharesSource.client.readFileData(
+                share: share,
+                path: path,
+                maxBytes: maxFullImageDownloadBytes
+            )
+        } catch {
+            Self.logger.error("Failed to read full image data for \(share)/\(path): \(error.localizedDescription)")
             return nil
         }
 
         guard !Task.isCancelled, !data.isEmpty else { return nil }
         guard let decoded = Self.decodeDownsampledImage(from: data, maxPixelSize: maxDimension) else {
+            Self.logger.warning("Failed to decode full image from \(data.count) bytes for \(path)")
             return nil
         }
 
@@ -191,7 +215,7 @@ public actor SMBImageLoader {
         fullImageCache.removeAllObjects()
     }
 
-    private nonisolated static func decodeDownsampledImage(from data: Data, maxPixelSize: CGFloat) -> UIImage? {
+    public nonisolated static func decodeDownsampledImage(from data: Data, maxPixelSize: CGFloat) -> UIImage? {
         let sourceOptions: [CFString: Any] = [
             kCGImageSourceShouldCache: false
         ]
@@ -210,6 +234,20 @@ public actor SMBImageLoader {
             return UIImage(cgImage: cgImage)
         }
         return UIImage(data: data)
+    }
+
+    public nonisolated static func decodeDownsampledImage(from url: URL, maxPixelSize: CGFloat) -> UIImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return UIImage(contentsOfFile: url.path)
+        }
+        return UIImage(cgImage: cgImage)
     }
     #else
     public func loadThumbnail(

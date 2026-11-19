@@ -34,8 +34,8 @@ public final class MediaDetailStore: Sendable {
         return c
     }()
 
-    /// Tracks in-flight metadata extraction tasks to deduplicate concurrent requests for the same media item.
-    private var inFlightTasks: [String: Task<String?, Never>] = [:]
+    /// Coordinates concurrent in-flight detail extraction tasks with subscriber-aware cancellation.
+    private let taskCoordinator = MediaDetailTaskCoordinator()
 
     public init() {}
 
@@ -71,21 +71,25 @@ public final class MediaDetailStore: Sendable {
             return cached
         }
 
-        if let existing = inFlightTasks[item.id] {
-            return await existing.value
-        }
-
-        let task = Task<String?, Never> { [weak self] in
+        let itemID = item.id
+        let coordinator = taskCoordinator
+        let task = await coordinator.task(for: itemID) { [weak self] in
             guard let self else { return nil }
             return await self.performResolution(for: item, resolver: resolver)
         }
 
-        inFlightTasks[item.id] = task
-        let result = await task.value
-        inFlightTasks.removeValue(forKey: item.id)
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            Task {
+                await coordinator.cancelSubscriber(for: itemID)
+            }
+        }
+
+        await coordinator.finish(for: itemID)
 
         if let result, !result.isEmpty {
-            registerDetail(result, for: item.id)
+            registerDetail(result, for: itemID)
         }
 
         return result

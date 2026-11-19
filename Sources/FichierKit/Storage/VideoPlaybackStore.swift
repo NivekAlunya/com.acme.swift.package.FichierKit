@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import os
 
 /// Persistent store tracking playback offsets, completion states, and resume positions for video media items.
 ///
@@ -20,6 +21,7 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
 
     /// Global shared singleton instance.
     public static let shared = VideoPlaybackStore()
+    private static let logger = Logger(subsystem: "com.acme.ios.fichierkit", category: "videoPlaybackStore")
 
     /// Observed playback records dictionary powering UI progress bars and status badges in SwiftUI views.
     public private(set) var records: [String: VideoPlaybackRecord] = [:]
@@ -53,17 +55,25 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
     }
 
     private func loadRecordsFromStorage() {
-        if let data = userDefaults.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([String: VideoPlaybackRecord].self, from: data) {
-            self.records = sanitizeDecodedRecords(decoded)
-            for (id, record) in self.records where record.duration > 0 {
-                MediaDetailStore.shared.registerDetail(MediaFormatHelper.formatDuration(record.duration), for: id)
+        if let data = userDefaults.data(forKey: storageKey) {
+            do {
+                let decoded = try JSONDecoder().decode([String: VideoPlaybackRecord].self, from: data)
+                self.records = sanitizeDecodedRecords(decoded)
+                for (id, record) in self.records where record.duration > 0 {
+                    MediaDetailStore.shared.registerDetail(MediaFormatHelper.formatDuration(record.duration), for: id)
+                }
+                persist()
+            } catch {
+                Self.logger.error("Failed to decode video playback records from storage: \(error.localizedDescription)")
             }
-            persist()
-        } else if let legacyData = userDefaults.data(forKey: legacyKey),
-                  let legacyPositions = try? JSONDecoder().decode([String: Double].self, from: legacyData) {
-            self.records = migrateLegacyV1Positions(legacyPositions)
-            persist()
+        } else if let legacyData = userDefaults.data(forKey: legacyKey) {
+            do {
+                let legacyPositions = try JSONDecoder().decode([String: Double].self, from: legacyData)
+                self.records = migrateLegacyV1Positions(legacyPositions)
+                persist()
+            } catch {
+                Self.logger.error("Failed to decode legacy video playback records: \(error.localizedDescription)")
+            }
         }
 
         migrateTVLegacyPositions()
@@ -294,8 +304,11 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
     }
 
     private func persist() {
-        if let encoded = try? JSONEncoder().encode(records) {
+        do {
+            let encoded = try JSONEncoder().encode(records)
             userDefaults.set(encoded, forKey: storageKey)
+        } catch {
+            Self.logger.error("Failed to encode video playback records: \(error.localizedDescription)")
         }
     }
 }

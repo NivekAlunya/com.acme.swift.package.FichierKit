@@ -142,44 +142,65 @@ public actor AMSMB2Client: SMBClientProtocol {
 
     // MARK: - Serialized SMB Implementations
 
-    private func performListShares() async throws -> [String] {
-        let maxAttempts = 3
+    /// Executes an async network operation with retries, connection reset handling, and backoff.
+    private func withRetry<T>(
+        maxAttempts: Int = 3,
+        share: String? = nil,
+        backoffMultiplier: Double = 1.0,
+        onRetryableError: ((Error) -> Void)? = nil,
+        operation: (Int, Bool) async throws -> T
+    ) async throws -> T {
         var lastError: Error?
 
         for attempt in 1...maxAttempts {
             try Task.checkCancellation()
             do {
-                let mgr = try getOrCreateManager()
-                let shareNames = try await mgr.listShareNames(enumerateHidden: false)
-                connectedShare = nil
-                return shareNames.sorted {
-                    $0.localizedStandardCompare($1) == .orderedAscending
-                }
+                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
+                return try await operation(attempt, forceReconnect)
             } catch is CancellationError {
                 throw CancellationError()
+            } catch let fileOp as FileOperationError {
+                throw fileOp
             } catch {
                 if Task.isCancelled { throw CancellationError() }
-                connectedShare = nil
+                if let posix = error as? POSIXError, posix.code == .ECANCELED {
+                    throw CancellationError()
+                }
                 lastError = error
+                onRetryableError?(error)
 
                 if Self.isConnectionResetError(error) {
+                    connectedShare = nil
                     try? await manager?.disconnectShare(gracefully: false)
                     manager = nil
                 }
 
                 if !isSpinUpOrTransientError(error) {
-                    throw mapError(error, share: nil)
+                    connectedShare = nil
+                    throw mapError(error, share: share)
                 }
 
                 if attempt < maxAttempts {
-                    let backoffSeconds = Double(attempt) * 1.5
-                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: backoffNs)
+                    let backoff = Double(attempt) * backoffMultiplier
+                    try await Task.sleep(for: .seconds(backoff))
+                } else {
+                    connectedShare = nil
                 }
             }
         }
 
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: nil)
+        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
+    }
+
+    private func performListShares() async throws -> [String] {
+        try await withRetry(maxAttempts: 3, share: nil, backoffMultiplier: 1.5) { _, _ in
+            let mgr = try getOrCreateManager()
+            let shareNames = try await mgr.listShareNames(enumerateHidden: false)
+            connectedShare = nil
+            return shareNames.sorted {
+                $0.localizedStandardCompare($1) == .orderedAscending
+            }
+        }
     }
 
     private func performListDirectory(share: String, path: String) async throws -> [MediaSourceItem] {
@@ -257,258 +278,110 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private func fetchAndMapDirectoryEntries(share: String, normalizedPath: String) async throws -> [MediaSourceItem] {
-        let maxAttempts = 4
-        var lastError: Error?
-
-        for attempt in 1...maxAttempts {
+        try await withRetry(maxAttempts: 4, share: share, backoffMultiplier: 1.5, onRetryableError: { [self] _ in
+            directorySnapshot = nil
+        }) { _, forceReconnect in
+            let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
             try Task.checkCancellation()
-            do {
-                // On initial retry, preserve tree connection so spinning media is not disrupted.
-                // Reconnect only after multiple failures or when socket is reset.
-                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
-                let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
-                try Task.checkCancellation()
 
-                let entries = try await mgr.directoryEntries(atPath: normalizedPath)
-                try Task.checkCancellation()
+            let entries = try await mgr.directoryEntries(atPath: normalizedPath)
+            try Task.checkCancellation()
 
-                var results: [MediaSourceItem] = []
-                results.reserveCapacity(entries.count)
+            var results: [MediaSourceItem] = []
+            results.reserveCapacity(entries.count)
 
-                for entry in entries {
-                    if Task.isCancelled { throw CancellationError() }
-                    guard let name = entry.name,
-                          !name.hasPrefix(".") else {
+            for entry in entries {
+                if Task.isCancelled { throw CancellationError() }
+                guard let name = entry.name,
+                      !name.hasPrefix(".") else {
+                    continue
+                }
+
+                let entryPath = entry.path
+                    ?? (normalizedPath.isEmpty ? name : "\(normalizedPath)/\(name)")
+                let cleanRelativePath = Self.normalizeRelativePath(entryPath)
+                let modifiedDate = entry.modifiedDate
+                let fullPath = cleanRelativePath.isEmpty ? share : "\(share)/\(cleanRelativePath)"
+                let itemID = "\(server.id)|\(share)::/\(cleanRelativePath)"
+
+                if entry.isDirectory {
+                    results.append(
+                        MediaSourceItem(
+                            id: itemID,
+                            name: name,
+                            path: fullPath,
+                            type: .folder,
+                            size: 0,
+                            modifiedDate: modifiedDate,
+                            sourceID: server.id,
+                            smbShare: share,
+                            smbPath: cleanRelativePath
+                        )
+                    )
+                } else if entry.isRegularFile {
+                    let ext = (name as NSString).pathExtension
+                    guard let itemType = MediaItemType.from(extension: ext) else {
                         continue
                     }
-
-                    let entryPath = entry.path
-                        ?? (normalizedPath.isEmpty ? name : "\(normalizedPath)/\(name)")
-                    let cleanRelativePath = Self.normalizeRelativePath(entryPath)
-                    let modifiedDate = entry.modifiedDate
-                    let fullPath = cleanRelativePath.isEmpty ? share : "\(share)/\(cleanRelativePath)"
-                    let itemID = "\(server.id)|\(share)::/\(cleanRelativePath)"
-
-                    if entry.isDirectory {
-                        results.append(
-                            MediaSourceItem(
-                                id: itemID,
-                                name: name,
-                                path: fullPath,
-                                type: .folder,
-                                size: 0,
-                                modifiedDate: modifiedDate,
-                                sourceID: server.id,
-                                smbShare: share,
-                                smbPath: cleanRelativePath
-                            )
+                    results.append(
+                        MediaSourceItem(
+                            id: itemID,
+                            name: name,
+                            path: fullPath,
+                            type: itemType,
+                            size: entry.fileSize,
+                            modifiedDate: modifiedDate,
+                            sourceID: server.id,
+                            smbShare: share,
+                            smbPath: cleanRelativePath
                         )
-                    } else if entry.isRegularFile {
-                        let ext = (name as NSString).pathExtension.lowercased()
-                        guard SupportedMediaTypes.isSupported(extension: ext) else {
-                            continue
-                        }
-                        let itemType: MediaItemType
-                        if SupportedMediaTypes.isVideo(extension: ext) {
-                            itemType = .video
-                        } else {
-                            #if !os(tvOS)
-                            itemType = SupportedMediaTypes.isDocument(extension: ext) ? .document : .image
-                            #else
-                            itemType = .image
-                            #endif
-                        }
-                        results.append(
-                            MediaSourceItem(
-                                id: itemID,
-                                name: name,
-                                path: fullPath,
-                                type: itemType,
-                                size: entry.fileSize,
-                                modifiedDate: modifiedDate,
-                                sourceID: server.id,
-                                smbShare: share,
-                                smbPath: cleanRelativePath
-                            )
-                        )
-                    }
-                }
-
-                return results
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                directorySnapshot = nil
-                lastError = error
-
-                if Self.isConnectionResetError(error) {
-                    connectedShare = nil
-                    try? await manager?.disconnectShare(gracefully: false)
-                    manager = nil
-                }
-
-                if !isSpinUpOrTransientError(error) {
-                    connectedShare = nil
-                    throw mapError(error, share: share)
-                }
-
-                if attempt < maxAttempts {
-                    // Escalating backoff for spinning mechanical drive wake-up (1.5s, 3.0s, 4.5s)
-                    let backoffSeconds = Double(attempt) * 1.5
-                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: backoffNs)
-                } else {
-                    connectedShare = nil
+                    )
                 }
             }
-        }
 
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
+            return results
+        }
     }
 
     private func performReadFileData(share: String, path: String, maxBytes: Int64?) async throws -> Data {
-        let maxAttempts = 4
-        var lastError: Error?
         let normalizedPath = Self.normalizeRelativePath(path)
-
-        for attempt in 1...maxAttempts {
+        return try await withRetry(maxAttempts: 4, share: share, backoffMultiplier: 1.5) { _, forceReconnect in
+            let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
             try Task.checkCancellation()
-            do {
-                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
-                let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
-                try Task.checkCancellation()
 
-                if let maxBytes, maxBytes > 0 {
-                    let range: Range<Int64> = 0..<maxBytes
-                    return try await mgr.readContents(atPath: normalizedPath, range: range) { _, _ in
-                        !Task.isCancelled
-                    }
-                } else {
-                    return try await mgr.readContents(atPath: normalizedPath, range: nil) { _, _ in
-                        !Task.isCancelled
-                    }
-                }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                lastError = error
-
-                if Self.isConnectionResetError(error) {
-                    connectedShare = nil
-                    try? await manager?.disconnectShare(gracefully: false)
-                    manager = nil
-                }
-
-                if !isSpinUpOrTransientError(error) {
-                    connectedShare = nil
-                    throw mapError(error, share: share)
-                }
-
-                if attempt < maxAttempts {
-                    let backoffSeconds = Double(attempt) * 1.5
-                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: backoffNs)
-                } else {
-                    connectedShare = nil
-                }
-            }
-        }
-
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
-    }
-
-    private func performReadMediaRange(share: String, path: String, offset: Int64, length: Int) async throws -> Data {
-        let maxAttempts = 3
-        var lastError: Error?
-        let normalizedPath = Self.normalizeRelativePath(path)
-
-        // Retry with linear backoff. Retries force a full reconnect when connection is dropped or on attempt > 2.
-        // Cancellation is never retried and is always rethrown as `CancellationError`.
-        for attempt in 1...maxAttempts {
-            try Task.checkCancellation()
-            do {
-                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
-                let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
-                try Task.checkCancellation()
-
-                let end = offset + Int64(length)
-                let range: Range<Int64> = offset..<end
-                // The progress closure is the only hook libsmb2 offers to abort a read in flight:
-                // returning `false` stops the transfer when the Swift task is cancelled.
+            if let maxBytes, maxBytes > 0 {
+                let range: Range<Int64> = 0..<maxBytes
                 return try await mgr.readContents(atPath: normalizedPath, range: range) { _, _ in
                     !Task.isCancelled
                 }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                lastError = error
-
-                if Self.isConnectionResetError(error) {
-                    connectedShare = nil
-                    try? await manager?.disconnectShare(gracefully: false)
-                    manager = nil
-                }
-
-                if !isSpinUpOrTransientError(error) {
-                    connectedShare = nil
-                    throw mapError(error, share: share)
-                }
-
-                if attempt < maxAttempts {
-                    let backoffSeconds = Double(attempt) * 1.0
-                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: backoffNs)
-                } else {
-                    connectedShare = nil
+            } else {
+                return try await mgr.readContents(atPath: normalizedPath, range: nil) { _, _ in
+                    !Task.isCancelled
                 }
             }
         }
+    }
 
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
+    private func performReadMediaRange(share: String, path: String, offset: Int64, length: Int) async throws -> Data {
+        let normalizedPath = Self.normalizeRelativePath(path)
+        return try await withRetry(maxAttempts: 3, share: share, backoffMultiplier: 1.0) { _, forceReconnect in
+            let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
+            try Task.checkCancellation()
+
+            let end = offset + Int64(length)
+            let range: Range<Int64> = offset..<end
+            return try await mgr.readContents(atPath: normalizedPath, range: range) { _, _ in
+                !Task.isCancelled
+            }
+        }
     }
 
     private func performFileSize(share: String, path: String) async throws -> Int64 {
-        let maxAttempts = 3
-        var lastError: Error?
         let normalizedPath = Self.normalizeRelativePath(path)
-
-        for attempt in 1...maxAttempts {
-            try Task.checkCancellation()
-            do {
-                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
-                let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
-                return try await mgr.fileSize(atPath: normalizedPath)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                lastError = error
-
-                if Self.isConnectionResetError(error) {
-                    connectedShare = nil
-                    try? await manager?.disconnectShare(gracefully: false)
-                    manager = nil
-                }
-
-                if !isSpinUpOrTransientError(error) {
-                    connectedShare = nil
-                    throw mapError(error, share: share)
-                }
-
-                if attempt < maxAttempts {
-                    let backoffSeconds = Double(attempt) * 1.0
-                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: backoffNs)
-                } else {
-                    connectedShare = nil
-                }
-            }
+        return try await withRetry(maxAttempts: 3, share: share, backoffMultiplier: 1.0) { _, forceReconnect in
+            let mgr = try await ensureConnected(to: share, forceReconnect: forceReconnect)
+            return try await mgr.fileSize(atPath: normalizedPath)
         }
-
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performDownloadFile(
@@ -517,63 +390,25 @@ public actor AMSMB2Client: SMBClientProtocol {
         to localURL: URL,
         progress: (@Sendable (Int64, Int64) -> Bool)?
     ) async throws {
-        let maxAttempts = 3
-        var lastError: Error?
         let normalizedPath = Self.normalizeRelativePath(path)
         let directoryURL = localURL.deletingLastPathComponent()
 
         // Each attempt downloads into a unique `.part` file next to the destination and is only moved
         // into place on success (`installCompletedFile`), so a failed or cancelled download can never
         // leave a truncated file that later looks like a valid cache entry.
-        for attempt in 1...maxAttempts {
-            try Task.checkCancellation()
+        try await withRetry(maxAttempts: 2, share: share, backoffMultiplier: 1.0) { _, forceReconnect in
             let tempURL = directoryURL.appendingPathComponent(
                 "\(localURL.lastPathComponent).\(UUID().uuidString).part"
             )
-
-            do {
-                let forceReconnect = attempt > 2 || (lastError.map(Self.isConnectionResetError) ?? false)
-                try await performSingleDownloadAttempt(
-                    share: share,
-                    normalizedPath: normalizedPath,
-                    tempURL: tempURL,
-                    destinationURL: localURL,
-                    forceReconnect: forceReconnect,
-                    progress: progress
-                )
-                return
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                // libsmb2 reports an aborted transfer (progress callback returned false) as ECANCELED.
-                if let posix = error as? POSIXError, posix.code == .ECANCELED {
-                    throw CancellationError()
-                }
-                lastError = error
-
-                if Self.isConnectionResetError(error) {
-                    connectedShare = nil
-                    try? await manager?.disconnectShare(gracefully: false)
-                    manager = nil
-                }
-
-                if !isSpinUpOrTransientError(error) {
-                    connectedShare = nil
-                    throw mapError(error, share: share)
-                }
-
-                if attempt < maxAttempts {
-                    let backoffSeconds = Double(attempt) * 1.0
-                    let backoffNs = UInt64(backoffSeconds * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: backoffNs)
-                } else {
-                    connectedShare = nil
-                }
-            }
+            try await performSingleDownloadAttempt(
+                share: share,
+                normalizedPath: normalizedPath,
+                tempURL: tempURL,
+                destinationURL: localURL,
+                forceReconnect: forceReconnect,
+                progress: progress
+            )
         }
-
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performSingleDownloadAttempt(
@@ -647,14 +482,11 @@ public actor AMSMB2Client: SMBClientProtocol {
         return false
     }
 
-    private func performCreateDirectory(share: String, path: String) async throws {
-        let normalized = Self.normalizeRelativePath(path)
-        guard !normalized.isEmpty else {
-            throw FileOperationError.invalidName(path)
-        }
-        try Self.validatePathComponents(normalized)
-        let components = normalized.split(separator: "/")
-
+    private func withWriteRetry(
+        share: String,
+        existingItemName: String? = nil,
+        operation: (any SMB2SessionProtocol) async throws -> Void
+    ) async throws {
         let maxAttempts = 2
         var lastError: Error?
 
@@ -663,7 +495,7 @@ public actor AMSMB2Client: SMBClientProtocol {
             do {
                 let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
                 try Task.checkCancellation()
-                try await mgr.createDirectory(atPath: normalized)
+                try await operation(mgr)
                 directorySnapshot = nil
                 return
             } catch is CancellationError {
@@ -672,14 +504,14 @@ public actor AMSMB2Client: SMBClientProtocol {
                 throw fileOp
             } catch {
                 if Task.isCancelled { throw CancellationError() }
-                if let posix = error as? POSIXError, posix.code == .EEXIST {
-                    let folderName = String(components.last ?? "")
-                    throw FileOperationError.itemAlreadyExists(folderName)
-                }
-                let desc = error.localizedDescription.lowercased()
-                if desc.contains("exists") || desc.contains("already") {
-                    let folderName = String(components.last ?? "")
-                    throw FileOperationError.itemAlreadyExists(folderName)
+                if let itemName = existingItemName {
+                    if let posix = error as? POSIXError, posix.code == .EEXIST {
+                        throw FileOperationError.itemAlreadyExists(itemName)
+                    }
+                    let desc = error.localizedDescription.lowercased()
+                    if desc.contains("exists") || desc.contains("already") {
+                        throw FileOperationError.itemAlreadyExists(itemName)
+                    }
                 }
                 if Self.isPermanentFilesystemError(error) {
                     throw mapError(error, share: share)
@@ -687,12 +519,25 @@ public actor AMSMB2Client: SMBClientProtocol {
                 connectedShare = nil
                 lastError = error
                 if attempt < maxAttempts {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    try? await Task.sleep(for: .milliseconds(200))
                 }
             }
         }
 
         throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
+    }
+
+    private func performCreateDirectory(share: String, path: String) async throws {
+        let normalized = Self.normalizeRelativePath(path)
+        guard !normalized.isEmpty else {
+            throw FileOperationError.invalidName(path)
+        }
+        try Self.validatePathComponents(normalized)
+        let folderName = String(normalized.split(separator: "/").last ?? "")
+
+        try await withWriteRetry(share: share, existingItemName: folderName) { mgr in
+            try await mgr.createDirectory(atPath: normalized)
+        }
     }
 
     private func performRemoveItem(share: String, path: String) async throws {
@@ -702,35 +547,9 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
         try Self.validatePathComponents(normalized)
 
-        let maxAttempts = 2
-        var lastError: Error?
-
-        for attempt in 1...maxAttempts {
-            try Task.checkCancellation()
-            do {
-                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
-                try Task.checkCancellation()
-                try await mgr.removeItem(atPath: normalized)
-                directorySnapshot = nil
-                return
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch let fileOp as FileOperationError {
-                throw fileOp
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                if Self.isPermanentFilesystemError(error) {
-                    throw mapError(error, share: share)
-                }
-                connectedShare = nil
-                lastError = error
-                if attempt < maxAttempts {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                }
-            }
+        try await withWriteRetry(share: share) { mgr in
+            try await mgr.removeItem(atPath: normalized)
         }
-
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performMoveItem(share: String, fromPath: String, toPath: String) async throws {
@@ -744,7 +563,6 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
         try Self.validatePathComponents(normFrom)
         try Self.validatePathComponents(normTo)
-        let toComponents = normTo.split(separator: "/")
 
         // Already in destination
         if normFrom == normTo {
@@ -756,44 +574,11 @@ public actor AMSMB2Client: SMBClientProtocol {
             throw FileOperationError.cannotMoveIntoSelf
         }
 
-        let maxAttempts = 2
-        var lastError: Error?
+        let itemName = String(normTo.split(separator: "/").last ?? "")
 
-        for attempt in 1...maxAttempts {
-            try Task.checkCancellation()
-            do {
-                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
-                try Task.checkCancellation()
-                try await mgr.moveItem(atPath: normFrom, toPath: normTo)
-                directorySnapshot = nil
-                return
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch let fileOp as FileOperationError {
-                throw fileOp
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                if let posix = error as? POSIXError, posix.code == .EEXIST {
-                    let itemName = String(toComponents.last ?? "")
-                    throw FileOperationError.itemAlreadyExists(itemName)
-                }
-                let desc = error.localizedDescription.lowercased()
-                if desc.contains("exists") || desc.contains("already") {
-                    let itemName = String(toComponents.last ?? "")
-                    throw FileOperationError.itemAlreadyExists(itemName)
-                }
-                if Self.isPermanentFilesystemError(error) {
-                    throw mapError(error, share: share)
-                }
-                connectedShare = nil
-                lastError = error
-                if attempt < maxAttempts {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                }
-            }
+        try await withWriteRetry(share: share, existingItemName: itemName) { mgr in
+            try await mgr.moveItem(atPath: normFrom, toPath: normTo)
         }
-
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performDisconnect() async {

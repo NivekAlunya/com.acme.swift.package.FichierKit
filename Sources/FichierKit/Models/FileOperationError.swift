@@ -33,4 +33,26 @@ public enum FileOperationError: LocalizedError, Sendable {
             return message
         }
     }
+
+    /// Validates and trims a prospective file or directory name.
+    ///
+    /// Rejects empty strings, ".", "..", names with illegal characters (`/ \ : * ? " < > | \0` or control characters),
+    /// or names with trailing periods.
+    ///
+    /// - Parameter name: The candidate name string.
+    /// - Returns: The sanitized trimmed name.
+    /// - Throws: `FileOperationError.invalidName` if the candidate name violates filesystem rules.
+    @discardableResult
+    public static func validateName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:*?\"<>|\0").union(.controlCharacters)
+        guard !trimmed.isEmpty,
+              trimmed != ".",
+              trimmed != "..",
+              trimmed.rangeOfCharacter(from: invalidCharacters) == nil,
+              !trimmed.hasSuffix(".") else {
+            throw FileOperationError.invalidName(name)
+        }
+        return trimmed
+    }
 }

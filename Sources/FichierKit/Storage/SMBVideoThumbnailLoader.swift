@@ -21,6 +21,12 @@ public actor SMBVideoThumbnailLoader {
     /// Canonical bounding pixel dimension shared across list rows and grid cards to avoid duplicate fetches.
     public static let standardMaxDimension: CGFloat = 560
 
+    // swiftlint:disable:next no_legacy_dispatch_queue
+    private static let resourceLoaderQueue = DispatchQueue(
+        label: "com.fichierkit.smb.thumb.resourceloader",
+        qos: .utility
+    )
+
     #if canImport(UIKit)
     private let thumbnailCache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
@@ -291,10 +297,8 @@ public actor SMBVideoThumbnailLoader {
             fileName: fileName,
             fileSize: fileSize
         )
-        // swiftlint:disable:next no_legacy_dispatch_queue
-        let loaderQueue = DispatchQueue(label: "com.fichierkit.smb.thumb.\(UUID().uuidString)")
         let asset = AVURLAsset(url: streamURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
-        asset.resourceLoader.setDelegate(delegate, queue: loaderQueue)
+        asset.resourceLoader.setDelegate(delegate, queue: Self.resourceLoaderQueue)
 
         defer {
             delegate.cancelAll()
@@ -312,8 +316,8 @@ public actor SMBVideoThumbnailLoader {
         } onCancel: {
             delegate.cancelAll()
         }
-        // AVURLAsset only holds the resource-loader delegate weakly; keep delegate and queue alive until extraction finishes.
-        withExtendedLifetime((delegate, loaderQueue)) {}
+        // AVURLAsset only holds the resource-loader delegate weakly; keep delegate alive until extraction finishes.
+        withExtendedLifetime(delegate) {}
         return result
     }
 

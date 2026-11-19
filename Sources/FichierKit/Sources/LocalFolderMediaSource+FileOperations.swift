@@ -20,15 +20,7 @@ extension LocalFolderMediaSource {
         named name: String,
         in parentFolder: MediaSourceItem? = nil
     ) async throws -> MediaSourceItem {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let invalidCharacters = CharacterSet(charactersIn: "/\\:*?\"<>|\0").union(.controlCharacters)
-        guard !trimmed.isEmpty,
-              trimmed != ".",
-              trimmed != "..",
-              trimmed.rangeOfCharacter(from: invalidCharacters) == nil,
-              !trimmed.hasSuffix(".") else {
-            throw FileOperationError.invalidName(name)
-        }
+        let trimmed = try FileOperationError.validateName(name)
 
         let parentURL: URL
         if let parentFolder {
@@ -160,15 +152,7 @@ extension LocalFolderMediaSource {
     /// - Returns: The updated `MediaSourceItem`.
     /// - Throws: `FileOperationError` if the name is invalid or a collision occurs.
     public func renameItem(_ item: MediaSourceItem, to newName: String) async throws -> MediaSourceItem {
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let invalidCharacters = CharacterSet(charactersIn: "/\\:*?\"<>|\0").union(.controlCharacters)
-        guard !trimmed.isEmpty,
-              trimmed != ".",
-              trimmed != "..",
-              trimmed.rangeOfCharacter(from: invalidCharacters) == nil,
-              !trimmed.hasSuffix(".") else {
-            throw FileOperationError.invalidName(newName)
-        }
+        let trimmed = try FileOperationError.validateName(newName)
 
         if trimmed == item.name {
             return item

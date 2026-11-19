@@ -30,7 +30,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.ANTIGRAVITY_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}
           PR_BASE: "origin/${{ github.base_ref }}"
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -39,7 +39,7 @@ jobs:
           GEMINI_API_KEY=$(printf '%s' "$GEMINI_API_KEY" | tr -d '[:space:][:cntrl:]')
           GEMINI_MODEL=$(printf '%s' "$GEMINI_MODEL" | tr -d '[:space:][:cntrl:]')
           if [ -z "$GEMINI_MODEL" ]; then
-            GEMINI_MODEL="gemini-3.8-flash"
+            GEMINI_MODEL="gemini-3.5-flash-lite"
           fi
 
           # Precondition 1: Verify API Key presence
@@ -59,11 +59,11 @@ jobs:
             exit 0
           fi
 
-          # Precondition 3: Guard against massive diffs (truncate to 1500 lines)
+          # Precondition 3: Guard against massive diffs (truncate to 800 lines for fast review)
           DIFF_LINES=$(wc -l < pr_diff.patch)
-          if [ "$DIFF_LINES" -gt 1500 ]; then
-            head -n 1500 pr_diff.patch > prompt_diff.patch
-            echo -e "\n\n... [Diff truncated: exceeded 1500 lines] ..." >> prompt_diff.patch
+          if [ "$DIFF_LINES" -gt 800 ]; then
+            head -n 800 pr_diff.patch > prompt_diff.patch
+            echo -e "\n\n... [Diff truncated: exceeded 800 lines] ..." >> prompt_diff.patch
           else
             cp pr_diff.patch prompt_diff.patch
           fi
@@ -122,29 +122,58 @@ jobs:
           \`\`\`
           EOF
 
-          # Create JSON payload cleanly with jq
-          jq -n --rawfile text full_prompt.txt '
-            {
-              contents: [{ parts: [{ text: $text }] }],
-              generationConfig: { temperature: 0.2 }
-            }
-          ' > request.json
+          # Candidate models: Primary model followed by resilient fallbacks
+          CANDIDATE_MODELS=("${GEMINI_MODEL}")
+          for fb in "gemini-4-hydrogen" "gemini-3.5-flash-lite" "gemini-3.1-flash-lite" "gemini-2.5-flash"; do
+            if [ "$fb" != "${GEMINI_MODEL}" ]; then
+              CANDIDATE_MODELS+=("$fb")
+            fi
+          done
 
-          # Call Gemini API with progressive delay (attempt * 15s) for 429 and 503
-          MAX_RETRIES=5
+          MAX_RETRIES=6
           SUCCESS=false
+          MODEL_IDX=0
+          CURRENT_MODEL="${CANDIDATE_MODELS[0]}"
 
           # Initial jitter (0-5s) to avoid burst collision when multiple packages trigger concurrently
           sleep $((RANDOM % 6))
 
           for attempt in $(seq 1 $MAX_RETRIES); do
-            echo "Calling Gemini API with model '${GEMINI_MODEL}' (attempt $attempt of $MAX_RETRIES)..."
+            # Fall back to alternative model if primary model experiences persistent 503 or 429
+            if [ "$attempt" -gt 2 ] && [ $((MODEL_IDX + 1)) -lt ${#CANDIDATE_MODELS[@]} ] && [ $((attempt % 2)) -eq 1 ]; then
+              MODEL_IDX=$((MODEL_IDX + 1))
+              CURRENT_MODEL="${CANDIDATE_MODELS[$MODEL_IDX]}"
+              echo "🔄 Switching to fallback model '${CURRENT_MODEL}' due to repeated server overload / rate limits..."
+            fi
+
+            # Dynamically configure thinking level only for models that support/require it (e.g. gemini-3.8 / gemini-3.6)
+            if [[ "${CURRENT_MODEL}" =~ 3\.[68] ]]; then
+              THINKING_ARG='{"thinkingLevel": "low"}'
+            else
+              THINKING_ARG='null'
+            fi
+
+            jq -n \
+              --rawfile text full_prompt.txt \
+              --argjson thinking "$THINKING_ARG" '
+              {
+                contents: [{ parts: [{ text: $text }] }],
+                generationConfig: (
+                  {
+                    temperature: 0.2,
+                    maxOutputTokens: 4096
+                  } + (if $thinking != null then { thinkingConfig: $thinking } else {} end)
+                )
+              }
+            ' > request.json
+
+            echo "Calling Gemini API with model '${CURRENT_MODEL}' (attempt $attempt of $MAX_RETRIES)..."
             rm -f response.json
             CURL_EXIT=0
-            HTTP_STATUS=$(curl -sS --connect-timeout 15 --max-time 60 -o response.json -w "%{http_code}" \
+            HTTP_STATUS=$(curl -sS --connect-timeout 20 --max-time 180 -o response.json -w "%{http_code}" \
               -H "Content-Type: application/json" \
               -H "x-goog-api-key: ${GEMINI_API_KEY}" \
-              "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent" \
+              "https://generativelanguage.googleapis.com/v1beta/models/${CURRENT_MODEL}:generateContent" \
               -d @request.json) || CURL_EXIT=$?
 
             if ! [[ "$HTTP_STATUS" =~ ^[0-9]{3}$ ]]; then
@@ -152,7 +181,7 @@ jobs:
             fi
 
             if [ "$CURL_EXIT" -eq 3 ]; then
-              echo "❌ Invalid Gemini API URL for model '${GEMINI_MODEL}' (curl exit code 3). Verify the GEMINI_MODEL variable."
+              echo "❌ Invalid Gemini API URL for model '${CURRENT_MODEL}' (curl exit code 3). Verify the model name."
               exit 1
             elif [ "$CURL_EXIT" -ne 0 ]; then
               echo "⚠️ curl exited with code $CURL_EXIT (HTTP status: $HTTP_STATUS)."
@@ -191,7 +220,7 @@ jobs:
           jq -r '.candidates[0].content.parts[0].text // "Review completed with no findings."' response.json >> review.md
           echo "" >> review.md
           echo "---" >> review.md
-          echo "*Reviewed by Antigravity Agent using \`${GEMINI_MODEL}\` on commit \`${GITHUB_SHA:0:7}\`*" >> review.md
+          echo "*Reviewed by Antigravity Agent using \`${CURRENT_MODEL}\` on commit \`${GITHUB_SHA:0:7}\`*" >> review.md
 
       - name: Post PR Review Comment
         env:

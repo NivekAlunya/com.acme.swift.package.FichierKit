@@ -35,6 +35,23 @@ struct MediaDetailStoreTests {
         #expect(MediaFormatHelper.formatDuration(Double(Int.max) * 2) == "")
     }
 
+    @Test("Format timestamp clock strings accurately")
+    func testFormatTimestamp() {
+        #expect(MediaFormatHelper.formatTimestamp(0) == "00:00")
+        #expect(MediaFormatHelper.formatTimestamp(0, zeroPaddedMinutes: false) == "0:00")
+        #expect(MediaFormatHelper.formatTimestamp(-5) == "00:00")
+        #expect(MediaFormatHelper.formatTimestamp(.nan) == "00:00")
+
+        #expect(MediaFormatHelper.formatTimestamp(12) == "00:12")
+        #expect(MediaFormatHelper.formatTimestamp(12, zeroPaddedMinutes: false) == "0:12")
+
+        #expect(MediaFormatHelper.formatTimestamp(83, zeroPaddedMinutes: false) == "1:23")
+        #expect(MediaFormatHelper.formatTimestamp(83, zeroPaddedMinutes: true) == "01:23")
+
+        #expect(MediaFormatHelper.formatTimestamp(3665, zeroPaddedHours: true) == "01:01:05")
+        #expect(MediaFormatHelper.formatTimestamp(3665, zeroPaddedHours: false, zeroPaddedMinutes: false) == "1:01:05")
+    }
+
     @Test("Format image frame dimensions accurately")
     func testFormatDimensions() {
         #expect(MediaFormatHelper.formatDimensions(width: 0, height: 0) == "")

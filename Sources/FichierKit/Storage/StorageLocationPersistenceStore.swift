@@ -13,9 +13,6 @@ import Wappn
 @MainActor
 public final class StorageLocationPersistenceStore {
 
-    /// Key for persisted SMB connections in `UserDefaults`.
-    private let savedConnectionsKey = "SavedSMBServerConnections_v2"
-
     /// Key for persisted local and iCloud Drive folder bookmarks in `UserDefaults`.
     private let savedFolderLocationsKey = "SavedFolderLocations_v1"
 
@@ -44,16 +41,7 @@ public final class StorageLocationPersistenceStore {
     ///
     /// - Returns: An array of `SavedSMBConnection` sorted with most recent connections first.
     public func loadSavedConnections() -> [SavedSMBConnection] {
-        guard let data = userDefaults.data(forKey: savedConnectionsKey) else {
-            return []
-        }
-        do {
-            let decoded = try JSONDecoder().decode([SavedSMBConnection].self, from: data)
-            return decoded.sorted { $0.lastConnected > $1.lastConnected }
-        } catch {
-            loge("Failed to decode saved SMB connections: \(error.localizedDescription)")
-            return []
-        }
+        SavedSMBConnection.decodeList(from: userDefaults.data(forKey: SavedSMBConnection.storageKey))
     }
 
     /// Retrieves the stored password from the secure Keychain for a given SMB connection.
@@ -118,8 +106,8 @@ public final class StorageLocationPersistenceStore {
     /// Serializes and writes SMB connection records to `UserDefaults`.
     private func persistConnections(_ connections: [SavedSMBConnection]) {
         do {
-            let encoded = try JSONEncoder().encode(connections)
-            userDefaults.set(encoded, forKey: savedConnectionsKey)
+            let encoded = try SavedSMBConnection.encodeList(connections)
+            userDefaults.set(encoded, forKey: SavedSMBConnection.storageKey)
         } catch {
             loge("Failed to encode and persist SMB connections: \(error.localizedDescription)")
         }

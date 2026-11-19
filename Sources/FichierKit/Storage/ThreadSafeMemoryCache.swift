@@ -12,7 +12,7 @@ import Foundation
 /// *"You can add, remove, and query items in the cache from different threads without having to lock the cache yourself."*
 /// However, because `NSCache` is an Objective-C class not yet marked `Sendable` in standard library overlays,
 /// this wrapper satisfies Swift 6 strict concurrency checks without resorting to `nonisolated(unsafe)`.
-nonisolated public final class ThreadSafeMemoryCache<Key: AnyObject, Value: AnyObject>: @unchecked Sendable {
+nonisolated public final class ThreadSafeMemoryCache<Key: AnyObject, Value: AnyObject & Sendable>: @unchecked Sendable {
     
     /// Underlying system `NSCache` managing LRU eviction and memory pressure purges.
     private let cache = NSCache<Key, Value>()

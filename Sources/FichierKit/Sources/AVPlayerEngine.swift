@@ -181,7 +181,13 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
 
     public func selectAudioTrack(_ track: PlayerAudioTrack) {
         guard let item = avPlayer.currentItem, let group = audibleGroup else { return }
-        if let option = group.options.first(where: { $0.displayName == track.title }) {
+        if let index = availableAudioTracks.firstIndex(where: { $0.id == track.id }),
+           index < group.options.count {
+            let option = group.options[index]
+            item.select(option, in: group)
+            selectedAudioTrack = track
+            onTracksChanged?()
+        } else if let option = group.options.first(where: { $0.displayName == track.title }) {
             item.select(option, in: group)
             selectedAudioTrack = track
             onTracksChanged?()
@@ -190,14 +196,31 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
 
     public func selectSubtitleTrack(_ track: PlayerSubtitleTrack?) {
         guard let item = avPlayer.currentItem, let group = legibleGroup else { return }
-        if let track, let option = group.options.first(where: { $0.displayName == track.title }) {
-            item.select(option, in: group)
-            selectedSubtitleTrack = track
+        if let track {
+            if let index = availableSubtitleTracks.firstIndex(where: { $0.id == track.id }),
+               index < group.options.count {
+                let option = group.options[index]
+                item.select(option, in: group)
+                selectedSubtitleTrack = track
+            } else if let option = group.options.first(where: { $0.displayName == track.title }) {
+                item.select(option, in: group)
+                selectedSubtitleTrack = track
+            }
         } else {
             item.select(nil, in: group)
             selectedSubtitleTrack = nil
         }
         onTracksChanged?()
+    }
+
+    public func clearCallbacks() {
+        onPlaybackEnded = nil
+        onError = nil
+        onStateUpdate = nil
+        onTimeUpdate = nil
+        onDurationUpdate = nil
+        onTracksChanged = nil
+        onChaptersChanged = nil
     }
 
     public func tearDown() {
@@ -317,7 +340,11 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
                     )
                 }
                 if let selected = item.currentMediaSelection.selectedMediaOption(in: audible) {
-                    self.selectedAudioTrack = self.availableAudioTracks.first(where: { $0.title == selected.displayName })
+                    if let selectedIndex = audible.options.firstIndex(where: { $0 === selected || $0 == selected }) {
+                        self.selectedAudioTrack = self.availableAudioTracks[selectedIndex]
+                    } else {
+                        self.selectedAudioTrack = self.availableAudioTracks.first(where: { $0.title == selected.displayName })
+                    }
                 }
             }
 
@@ -333,7 +360,11 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
                     )
                 }
                 if let selected = item.currentMediaSelection.selectedMediaOption(in: legible) {
-                    self.selectedSubtitleTrack = self.availableSubtitleTracks.first(where: { $0.title == selected.displayName })
+                    if let selectedIndex = legible.options.firstIndex(where: { $0 === selected || $0 == selected }) {
+                        self.selectedSubtitleTrack = self.availableSubtitleTracks[selectedIndex]
+                    } else {
+                        self.selectedSubtitleTrack = self.availableSubtitleTracks.first(where: { $0.title == selected.displayName })
+                    }
                 }
             }
             onTracksChanged?()

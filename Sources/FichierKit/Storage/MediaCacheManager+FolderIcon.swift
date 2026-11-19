@@ -106,7 +106,7 @@ extension MediaCacheManager {
             } else {
                 thumbnailToSave = image
             }
-            self.saveThumbnailAsync(thumbnailToSave, for: key)
+            await self.saveThumbnailAsync(thumbnailToSave, for: key)
         }
     }
 

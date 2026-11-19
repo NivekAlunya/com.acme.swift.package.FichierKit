@@ -212,10 +212,28 @@ nonisolated public final class MediaCacheManager: Sendable {
     }
     
     #if canImport(UIKit)
-    /// Asynchronously retrieves a cached thumbnail from disk on a background worker queue.
+    /// Asynchronously retrieves a cached thumbnail from disk off the caller's executor via `MediaDiskCacheActor`.
     public func getThumbnailAsync(for key: String, fallbackKey: String? = nil, legacyKey: String? = nil) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
-        return self.getThumbnail(for: key, fallbackKey: fallbackKey, legacyKey: legacyKey)
+        let fileURL = thumbnailsDirectory.appendingPathComponent("\(key).jpg")
+        if let data = await diskActor.readData(from: fileURL), let image = UIImage(data: data) {
+            return image
+        }
+        guard !Task.isCancelled else { return nil }
+        if let fallbackKey {
+            let fallbackURL = thumbnailsDirectory.appendingPathComponent("\(fallbackKey).jpg")
+            if let data = await diskActor.readData(from: fallbackURL), let image = UIImage(data: data) {
+                return image
+            }
+        }
+        guard !Task.isCancelled else { return nil }
+        if let legacyKey, legacyKey != key, legacyKey != fallbackKey {
+            let legacyURL = thumbnailsDirectory.appendingPathComponent("\(legacyKey).jpg")
+            if let data = await diskActor.readData(from: legacyURL), let image = UIImage(data: data) {
+                return image
+            }
+        }
+        return nil
     }
     
     /// Writes an image thumbnail to disk as an atomic JPEG file (82% compression quality).
@@ -234,15 +252,13 @@ nonisolated public final class MediaCacheManager: Sendable {
     }
     
     /// Asynchronously saves an image thumbnail to disk isolated on `MediaDiskCacheActor`.
-    public func saveThumbnailAsync(_ image: UIImage, for key: String) {
+    public func saveThumbnailAsync(_ image: UIImage, for key: String) async {
         let fileURL = thumbnailsDirectory.appendingPathComponent("\(key).jpg")
-        Task(priority: .utility) { [diskActor] in
-            guard let data = image.jpegData(compressionQuality: 0.82) else { return }
-            do {
-                try await diskActor.writeData(data, to: fileURL)
-            } catch {
-                loge("Failed to write thumbnail asynchronously: \(error.localizedDescription)")
-            }
+        guard let data = image.jpegData(compressionQuality: 0.82) else { return }
+        do {
+            try await diskActor.writeData(data, to: fileURL)
+        } catch {
+            loge("Failed to write thumbnail asynchronously: \(error.localizedDescription)")
         }
     }
     #endif
