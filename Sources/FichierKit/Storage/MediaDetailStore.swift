@@ -71,8 +71,9 @@ public final class MediaDetailStore: Sendable {
         if let num = parsedResolutionCache.object(forKey: key) {
             return num.intValue
         }
-        if let (w, h) = dimensions(for: itemID) {
-            let res = w * h
+        if let (w, h) = dimensions(for: itemID), w > 0, h > 0 {
+            let (res, overflow) = w.multipliedReportingOverflow(by: h)
+            guard !overflow else { return nil }
             parsedResolutionCache.setObject(NSNumber(value: res), forKey: key)
             return res
         }
@@ -107,10 +108,19 @@ public final class MediaDetailStore: Sendable {
         let key = itemID as NSString
         cache.setObject(detail as NSString, forKey: key)
         if let (w, h) = MediaFormatHelper.parseDimensions(detail), w > 0, h > 0 {
-            parsedResolutionCache.setObject(NSNumber(value: w * h), forKey: key)
+            let (res, overflow) = w.multipliedReportingOverflow(by: h)
+            if !overflow {
+                parsedResolutionCache.setObject(NSNumber(value: res), forKey: key)
+            } else {
+                parsedResolutionCache.removeObject(forKey: key)
+            }
+        } else {
+            parsedResolutionCache.removeObject(forKey: key)
         }
         if let dur = MediaFormatHelper.parseDuration(detail), dur > 0 {
             parsedDurationCache.setObject(NSNumber(value: dur), forKey: key)
+        } else {
+            parsedDurationCache.removeObject(forKey: key)
         }
         revision &+= 1
     }

@@ -182,6 +182,37 @@ struct MediaDetailStoreTests {
         #expect(store.duration(for: vidID) == nil)
     }
 
+    @Test("MediaDetailStore prevents integer overflow and clears stale numeric caches")
+    @MainActor
+    func testMediaDetailStoreOverflowAndCacheConsistency() {
+        let store = MediaDetailStore.shared
+        store.clearCache()
+
+        let itemID = "multimedia-item"
+
+        // 1. Initial registration with resolution (image)
+        store.registerDetail("1920 × 1080", for: itemID)
+        #expect(store.resolution(for: itemID) == 1920 * 1080)
+        #expect(store.duration(for: itemID) == nil)
+
+        // 2. Overwrite with duration (e.g. item re-classified as video): resolution cache must be cleared
+        store.registerDetail("01:30", for: itemID)
+        #expect(store.cachedDetail(for: itemID) == "01:30")
+        #expect(store.resolution(for: itemID) == nil)
+        #expect(store.duration(for: itemID) == 90.0)
+
+        // 3. Overwrite with document page count: duration cache must also be cleared
+        store.registerDetail("12 pages", for: itemID)
+        #expect(store.cachedDetail(for: itemID) == "12 pages")
+        #expect(store.resolution(for: itemID) == nil)
+        #expect(store.duration(for: itemID) == nil)
+
+        // 4. Overflow protection: dimensions that exceed Int bounds must not trap and return nil
+        let overflowID = "overflow-item"
+        store.registerDetail("\(Int.max) × 2", for: overflowID)
+        #expect(store.resolution(for: overflowID) == nil)
+    }
+
     @Test("MediaSortKey CaseIterable and Codable round-trip")
     func testMediaSortKeyCodable() throws {
         #expect(MediaSortKey.allCases.count == 7)
