@@ -30,7 +30,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.ANTIGRAVITY_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}
           PR_BASE: "origin/${{ github.base_ref }}"
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -39,7 +39,7 @@ jobs:
           GEMINI_API_KEY=$(printf '%s' "$GEMINI_API_KEY" | tr -d '[:space:][:cntrl:]')
           GEMINI_MODEL=$(printf '%s' "$GEMINI_MODEL" | tr -d '[:space:][:cntrl:]')
           if [ -z "$GEMINI_MODEL" ]; then
-            GEMINI_MODEL="gemini-3.8-flash"
+            GEMINI_MODEL="gemini-3.5-flash-lite"
           fi
 
           # Precondition 1: Verify API Key presence
@@ -122,23 +122,9 @@ jobs:
           \`\`\`
           EOF
 
-          # Create JSON payload cleanly with jq, constraining thinking level to avoid multi-minute reasoning hangs
-          jq -n --rawfile text full_prompt.txt '
-            {
-              contents: [{ parts: [{ text: $text }] }],
-              generationConfig: {
-                temperature: 0.2,
-                maxOutputTokens: 4096,
-                thinkingConfig: {
-                  thinkingLevel: "low"
-                }
-              }
-            }
-          ' > request.json
-
           # Candidate models: Primary model followed by resilient fallbacks
           CANDIDATE_MODELS=("${GEMINI_MODEL}")
-          for fb in "gemini-3.5-flash-lite" "gemini-2.5-flash"; do
+          for fb in "gemini-4-hydrogen" "gemini-3.5-flash-lite" "gemini-3.1-flash-lite" "gemini-2.5-flash"; do
             if [ "$fb" != "${GEMINI_MODEL}" ]; then
               CANDIDATE_MODELS+=("$fb")
             fi
@@ -159,6 +145,27 @@ jobs:
               CURRENT_MODEL="${CANDIDATE_MODELS[$MODEL_IDX]}"
               echo "🔄 Switching to fallback model '${CURRENT_MODEL}' due to repeated server overload / rate limits..."
             fi
+
+            # Dynamically configure thinking level only for models that support/require it (e.g. gemini-3.8 / gemini-3.6)
+            if [[ "${CURRENT_MODEL}" =~ 3\.[68] ]]; then
+              THINKING_ARG='{"thinkingLevel": "low"}'
+            else
+              THINKING_ARG='null'
+            fi
+
+            jq -n \
+              --rawfile text full_prompt.txt \
+              --argjson thinking "$THINKING_ARG" '
+              {
+                contents: [{ parts: [{ text: $text }] }],
+                generationConfig: (
+                  {
+                    temperature: 0.2,
+                    maxOutputTokens: 4096
+                  } + (if $thinking != null then { thinkingConfig: $thinking } else {} end)
+                )
+              }
+            ' > request.json
 
             echo "Calling Gemini API with model '${CURRENT_MODEL}' (attempt $attempt of $MAX_RETRIES)..."
             rm -f response.json
