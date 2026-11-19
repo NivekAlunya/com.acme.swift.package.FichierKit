@@ -50,7 +50,8 @@ public actor SMBVideoThumbnailLoader {
         fileName: String,
         fileSize: Int64,
         targetSize: CGSize = CGSize(width: 380, height: 260),
-        resolver: any MediaSourceResolverProtocol = DefaultMediaSourceResolver.shared
+        resolver: any MediaSourceResolverProtocol = DefaultMediaSourceResolver.shared,
+        itemID: String? = nil
     ) async -> UIImage? {
         let ext = Self.fileExtension(fileName: fileName, fallbackPath: path)
         guard SupportedMediaTypes.isVideo(extension: ext) else {
@@ -84,7 +85,8 @@ public actor SMBVideoThumbnailLoader {
             fileSize: fileSize,
             fileExtension: ext,
             maxDimension: maxDimension,
-            cacheKey: cacheKey
+            cacheKey: cacheKey,
+            itemID: itemID
         )
 
         if let image, !Task.isCancelled {
@@ -98,7 +100,8 @@ public actor SMBVideoThumbnailLoader {
     public func loadThumbnail(
         from localURL: URL,
         fileName: String? = nil,
-        targetSize: CGSize = CGSize(width: 380, height: 260)
+        targetSize: CGSize = CGSize(width: 380, height: 260),
+        itemID: String? = nil
     ) async -> UIImage? {
         guard localURL.isFileURL, !Task.isCancelled else { return nil }
 
@@ -122,7 +125,8 @@ public actor SMBVideoThumbnailLoader {
             return await Self.extractLocalThumbnail(
                 from: localURL,
                 fileExtension: ext,
-                maxDimension: maxDimension
+                maxDimension: maxDimension,
+                itemID: itemID
             )
         }
 
@@ -172,7 +176,8 @@ public actor SMBVideoThumbnailLoader {
         fileSize: Int64,
         fileExtension: String,
         maxDimension: CGFloat,
-        cacheKey: String
+        cacheKey: String,
+        itemID: String? = nil
     ) async -> UIImage? {
         try? await smbLimiter.withPermit {
             guard !Task.isCancelled else { return nil as UIImage? }
@@ -199,7 +204,8 @@ public actor SMBVideoThumbnailLoader {
                 path: path,
                 fileName: fileName,
                 fileSize: resolvedSize,
-                maxDimension: maxDimension
+                maxDimension: maxDimension,
+                itemID: itemID
             )
         }
     }
@@ -216,14 +222,16 @@ public actor SMBVideoThumbnailLoader {
         path: String,
         fileName: String,
         fileSize: Int64,
-        maxDimension: CGFloat = standardMaxDimension
+        maxDimension: CGFloat = standardMaxDimension,
+        itemID: String? = nil
     ) async -> UIImage? {
         guard fileSize > 0, !Task.isCancelled else { return nil }
         let ext = fileExtension(fileName: fileName, fallbackPath: path)
         if !SupportedMediaTypes.isExtendedVideo(extension: ext) {
             if let nativeImage = await extractWithSMBAVFoundation(
                 client: client, share: share, path: path, fileName: fileName,
-                fileSize: fileSize, maxDimension: maxDimension, timeoutSeconds: 12.0
+                fileSize: fileSize, maxDimension: maxDimension, timeoutSeconds: 12.0,
+                itemID: itemID
             ) {
                 return nativeImage
             }
@@ -257,7 +265,8 @@ public actor SMBVideoThumbnailLoader {
     private nonisolated static func extractLocalThumbnail(
         from url: URL,
         fileExtension: String,
-        maxDimension: CGFloat
+        maxDimension: CGFloat,
+        itemID: String? = nil
     ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
 
@@ -267,10 +276,10 @@ public actor SMBVideoThumbnailLoader {
             }
             guard !Task.isCancelled else { return nil }
             let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
-            return await extractWithAVFoundation(asset: asset, maxDimension: maxDimension, timeoutSeconds: 8.0)
+            return await extractWithAVFoundation(asset: asset, maxDimension: maxDimension, timeoutSeconds: 8.0, itemID: itemID)
         } else {
             let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
-            if let avImage = await extractWithAVFoundation(asset: asset, maxDimension: maxDimension, timeoutSeconds: 10.0) {
+            if let avImage = await extractWithAVFoundation(asset: asset, maxDimension: maxDimension, timeoutSeconds: 10.0, itemID: itemID) {
                 return avImage
             }
             guard !Task.isCancelled else { return nil }
@@ -285,7 +294,8 @@ public actor SMBVideoThumbnailLoader {
         fileName: String,
         fileSize: Int64,
         maxDimension: CGFloat,
-        timeoutSeconds: Double
+        timeoutSeconds: Double,
+        itemID: String? = nil
     ) async -> UIImage? {
         guard !Task.isCancelled, fileSize > 0 else { return nil }
 
@@ -311,6 +321,7 @@ public actor SMBVideoThumbnailLoader {
                 asset: asset,
                 maxDimension: maxDimension,
                 timeoutSeconds: timeoutSeconds,
+                itemID: itemID,
                 onAbort: { delegate.cancelAll() }
             )
         } onCancel: {
@@ -349,6 +360,7 @@ public actor SMBVideoThumbnailLoader {
         asset: AVURLAsset,
         maxDimension: CGFloat,
         timeoutSeconds: Double,
+        itemID: String? = nil,
         onAbort: (@Sendable () -> Void)? = nil
     ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
@@ -358,7 +370,7 @@ public actor SMBVideoThumbnailLoader {
         // cancelled. `onAbort` additionally cancels in-flight SMB reads so the socket is freed.
         return await withTaskGroup(of: UIImage?.self) { group in
             group.addTask {
-                await renderAVAssetFrame(asset: asset, maxDimension: maxDimension)
+                await renderAVAssetFrame(asset: asset, maxDimension: maxDimension, itemID: itemID)
             }
 
             group.addTask {
@@ -373,11 +385,22 @@ public actor SMBVideoThumbnailLoader {
         }
     }
 
-    private nonisolated static func renderAVAssetFrame(asset: AVURLAsset, maxDimension: CGFloat) async -> UIImage? {
+    private nonisolated static func renderAVAssetFrame(
+        asset: AVURLAsset,
+        maxDimension: CGFloat,
+        itemID: String? = nil
+    ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
 
         let durationSeconds = try? await asset.load(.duration).seconds
         guard !Task.isCancelled else { return nil }
+
+        if let durationSeconds, durationSeconds > 0, let itemID {
+            let durFormatted = MediaFormatHelper.formatDuration(durationSeconds)
+            Task { @MainActor in
+                MediaDetailStore.shared.registerDetail(durFormatted, for: itemID)
+            }
+        }
 
         let (targetTime, tolerance) = resolveSampleTiming(durationSeconds: durationSeconds)
 

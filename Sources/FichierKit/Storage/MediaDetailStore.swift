@@ -5,6 +5,7 @@
 //
 
 import Foundation
+import Observation
 import AVFoundation
 #if canImport(CoreGraphics)
 import CoreGraphics
@@ -12,16 +13,20 @@ import CoreGraphics
 #if canImport(ImageIO)
 import ImageIO
 #endif
-#if canImport(Photos) && !os(tvOS)
+#if canImport(Photos)
 import Photos
 #endif
 
 /// Thread-safe coordinator and memory cache providing lightweight, non-blocking media metadata
 /// descriptors (video duration, image frame dimensions, and PDF page counts) for list and grid cells.
+@Observable
 @MainActor
 public final class MediaDetailStore: Sendable {
     /// Shared singleton instance.
     public static let shared = MediaDetailStore()
+
+    /// Reactive revision counter incremented on every cache registration or eviction to notify observing views.
+    public private(set) var revision: Int = 0
 
     /// Shared queue used by AVAssetResourceLoader delegate callbacks during video metadata probing.
     // swiftlint:disable:next no_legacy_dispatch_queue
@@ -50,11 +55,13 @@ public final class MediaDetailStore: Sendable {
     public func registerDetail(_ detail: String, for itemID: String) {
         guard !detail.isEmpty else { return }
         cache.setObject(detail as NSString, forKey: itemID as NSString)
+        revision &+= 1
     }
 
     /// Clears all cached media detail records.
     public func clearCache() {
         cache.removeAllObjects()
+        revision &+= 1
     }
 
     // MARK: - Asynchronous Resolution
@@ -104,7 +111,7 @@ public final class MediaDetailStore: Sendable {
         guard !Task.isCancelled, item.type != .folder else { return nil }
 
         // 1. PhotoKit Library Asset (instantaneous metadata lookup)
-        #if canImport(Photos) && !os(tvOS)
+        #if canImport(Photos)
         if let phID = item.phAssetIdentifier {
             let fetch = PHAsset.fetchAssets(withLocalIdentifiers: [phID], options: nil)
             if let asset = fetch.firstObject {
@@ -176,7 +183,7 @@ public final class MediaDetailStore: Sendable {
                 Self.parsePrefixImageDimensions(data: prefix)
             }.value
         } else if SupportedMediaTypes.isVideo(extension: ext) && !SupportedMediaTypes.isExtendedVideo(extension: ext) {
-            // Fast AVURLAsset probe over SMBAVAssetResourceLoaderDelegate with strict 1.5s timeout
+            // Fast AVURLAsset probe over SMBAVAssetResourceLoaderDelegate with 3.0s timeout
             let streamURL = SMBAVAssetResourceLoaderDelegate.makeStreamURL(fileName: item.name)
             let delegate = SMBAVAssetResourceLoaderDelegate(
                 client: sharesSource.client,
@@ -199,7 +206,7 @@ public final class MediaDetailStore: Sendable {
                     try? await asset.load(.duration).seconds
                 }
                 group.addTask {
-                    try? await Task.sleep(for: .milliseconds(1500))
+                    try? await Task.sleep(for: .milliseconds(3000))
                     // Cancel delegate and asset immediately on timeout to abort network I/O and unblock group join
                     delegate.cancelAll()
                     asset.cancelLoading()
