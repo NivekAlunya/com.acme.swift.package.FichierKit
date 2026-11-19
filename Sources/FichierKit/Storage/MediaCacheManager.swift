@@ -252,15 +252,13 @@ nonisolated public final class MediaCacheManager: Sendable {
     }
     
     /// Asynchronously saves an image thumbnail to disk isolated on `MediaDiskCacheActor`.
-    public func saveThumbnailAsync(_ image: UIImage, for key: String) {
+    public func saveThumbnailAsync(_ image: UIImage, for key: String) async {
         let fileURL = thumbnailsDirectory.appendingPathComponent("\(key).jpg")
-        Task(priority: .utility) { [diskActor] in
-            guard let data = image.jpegData(compressionQuality: 0.82) else { return }
-            do {
-                try await diskActor.writeData(data, to: fileURL)
-            } catch {
-                loge("Failed to write thumbnail asynchronously: \(error.localizedDescription)")
-            }
+        guard let data = image.jpegData(compressionQuality: 0.82) else { return }
+        do {
+            try await diskActor.writeData(data, to: fileURL)
+        } catch {
+            loge("Failed to write thumbnail asynchronously: \(error.localizedDescription)")
         }
     }
     #endif
