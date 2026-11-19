@@ -141,7 +141,7 @@ jobs:
             echo "Calling Gemini API with model '${GEMINI_MODEL}' (attempt $attempt of $MAX_RETRIES)..."
             rm -f response.json
             CURL_EXIT=0
-            HTTP_STATUS=$(curl -sS --connect-timeout 15 --max-time 60 -o response.json -w "%{http_code}" \
+            HTTP_STATUS=$(curl -sS --connect-timeout 20 --max-time 180 -o response.json -w "%{http_code}" \
               -H "Content-Type: application/json" \
               -H "x-goog-api-key: ${GEMINI_API_KEY}" \
               "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent" \
