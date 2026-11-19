@@ -39,6 +39,20 @@ public final class MediaDetailStore: Sendable {
         return c
     }()
 
+    /// Fast numeric cache for parsed pixel resolution keyed by item ID.
+    private let parsedResolutionCache: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>()
+        c.countLimit = 2000
+        return c
+    }()
+
+    /// Fast numeric cache for parsed video duration in seconds keyed by item ID.
+    private let parsedDurationCache: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>()
+        c.countLimit = 2000
+        return c
+    }()
+
     /// Coordinates concurrent in-flight detail extraction tasks with subscriber-aware cancellation.
     private let taskCoordinator = MediaDetailTaskCoordinator()
 
@@ -53,8 +67,14 @@ public final class MediaDetailStore: Sendable {
 
     /// Returns the pixel resolution (width * height) if resolved and cached for the item ID.
     public func resolution(for itemID: String) -> Int? {
+        let key = itemID as NSString
+        if let num = parsedResolutionCache.object(forKey: key) {
+            return num.intValue
+        }
         if let (w, h) = dimensions(for: itemID) {
-            return w * h
+            let res = w * h
+            parsedResolutionCache.setObject(NSNumber(value: res), forKey: key)
+            return res
         }
         return nil
     }
@@ -69,8 +89,14 @@ public final class MediaDetailStore: Sendable {
 
     /// Returns the duration in seconds if resolved and cached for the item ID.
     public func duration(for itemID: String) -> Double? {
-        if let cached = cachedDetail(for: itemID) {
-            return MediaFormatHelper.parseDuration(cached)
+        let key = itemID as NSString
+        if let num = parsedDurationCache.object(forKey: key) {
+            return num.doubleValue
+        }
+        if let cached = cachedDetail(for: itemID),
+           let parsed = MediaFormatHelper.parseDuration(cached) {
+            parsedDurationCache.setObject(NSNumber(value: parsed), forKey: key)
+            return parsed
         }
         return nil
     }
@@ -78,13 +104,22 @@ public final class MediaDetailStore: Sendable {
     /// Stores a resolved media detail descriptor in the in-memory cache.
     public func registerDetail(_ detail: String, for itemID: String) {
         guard !detail.isEmpty else { return }
-        cache.setObject(detail as NSString, forKey: itemID as NSString)
+        let key = itemID as NSString
+        cache.setObject(detail as NSString, forKey: key)
+        if let (w, h) = MediaFormatHelper.parseDimensions(detail), w > 0, h > 0 {
+            parsedResolutionCache.setObject(NSNumber(value: w * h), forKey: key)
+        }
+        if let dur = MediaFormatHelper.parseDuration(detail), dur > 0 {
+            parsedDurationCache.setObject(NSNumber(value: dur), forKey: key)
+        }
         revision &+= 1
     }
 
     /// Clears all cached media detail records.
     public func clearCache() {
         cache.removeAllObjects()
+        parsedResolutionCache.removeAllObjects()
+        parsedDurationCache.removeAllObjects()
         revision &+= 1
     }
 
