@@ -1168,6 +1168,9 @@
         }
       }
     },
+    "The folder name '%@' is invalid. Names cannot be empty or contain slashes." : {
+      "comment" : "Error message for invalid folder name"
+    },
     "The item is already in the selected destination folder." : {
       "comment" : "Error message when moving item to same folder"
     },

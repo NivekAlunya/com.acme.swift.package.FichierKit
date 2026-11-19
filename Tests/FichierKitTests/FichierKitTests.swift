@@ -22,6 +22,9 @@ struct FichierKitTests {
         #expect(photosSource.preferredLayout == .grid)
         #expect(photosSource.supportedSortKeys.contains(.date))
         #expect(photosSource.supportedSortKeys.contains(.name))
+        #expect(photosSource.supportedSortKeys.contains(.kind))
+        #expect(photosSource.supportedSortKeys.contains(.resolution))
+        #expect(photosSource.supportedSortKeys.contains(.duration))
     }
 
     @Test("Verify SharesMediaSource Layout and Root Shares Fetching")

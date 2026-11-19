@@ -196,6 +196,17 @@ public final class PhotosMediaSource: MediaSource, Sendable {
             namedAssets.append((asset, Self.resolveAssetFileName(asset)))
         }
 
+        func breakTieByNameThenID(
+            _ lhs: (asset: PHAsset, fileName: String),
+            _ rhs: (asset: PHAsset, fileName: String)
+        ) -> Bool {
+            let cmp = lhs.fileName.localizedStandardCompare(rhs.fileName)
+            if cmp == .orderedSame {
+                return lhs.asset.localIdentifier < rhs.asset.localIdentifier
+            }
+            return cmp == .orderedAscending
+        }
+
         namedAssets.sort { lhs, rhs in
             switch sortKey {
             case .name:
@@ -212,31 +223,33 @@ public final class PhotosMediaSource: MediaSource, Sendable {
                 if lKind != rKind {
                     return isAscending ? lKind < rKind : lKind > rKind
                 }
-                return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+                return breakTieByNameThenID(lhs, rhs)
             case .resolution:
-                let lRes = lhs.asset.pixelWidth * lhs.asset.pixelHeight
-                let rRes = rhs.asset.pixelWidth * rhs.asset.pixelHeight
+                let (lMult, lOverflow) = lhs.asset.pixelWidth.multipliedReportingOverflow(by: lhs.asset.pixelHeight)
+                let (rMult, rOverflow) = rhs.asset.pixelWidth.multipliedReportingOverflow(by: rhs.asset.pixelHeight)
+                let lRes = lOverflow ? 0 : lMult
+                let rRes = rOverflow ? 0 : rMult
                 if lRes <= 0 && rRes <= 0 {
-                    return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+                    return breakTieByNameThenID(lhs, rhs)
                 }
                 if lRes <= 0 { return false }
                 if rRes <= 0 { return true }
                 if lRes != rRes {
                     return isAscending ? lRes < rRes : lRes > rRes
                 }
-                return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+                return breakTieByNameThenID(lhs, rhs)
             case .duration:
                 let lDur = lhs.asset.duration
                 let rDur = rhs.asset.duration
                 if lDur <= 0 && rDur <= 0 {
-                    return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+                    return breakTieByNameThenID(lhs, rhs)
                 }
                 if lDur <= 0 { return false }
                 if rDur <= 0 { return true }
                 if lDur != rDur {
                     return isAscending ? lDur < rDur : lDur > rDur
                 }
-                return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+                return breakTieByNameThenID(lhs, rhs)
             default:
                 let cmp = lhs.fileName.localizedStandardCompare(rhs.fileName)
                 return isAscending ? cmp == .orderedAscending : cmp == .orderedDescending

@@ -176,22 +176,24 @@ struct MediaSourceItemSortComparatorTests {
         let hd = Self.makeItem(id: "f-hd", name: "hd.jpg", type: .image)
         let fourK = Self.makeItem(id: "f-4k", name: "4k.jpg", type: .image)
         let unk = Self.makeItem(id: "f-unk", name: "unknown.jpg", type: .image)
+        let zero = Self.makeItem(id: "f-zero", name: "zero.jpg", type: .image)
 
         let resolver: (String) -> (resolution: Int?, duration: Double?) = { id in
             switch id {
             case "f-hd": return (1920 * 1080, nil)
             case "f-4k": return (3840 * 2160, nil)
+            case "f-zero": return (0, nil)
             default: return (nil, nil)
             }
         }
 
-        let items = [hd, folder, unk, fourK]
+        let items = [hd, folder, unk, fourK, zero]
 
         let asc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .resolution, order: .ascending, detailResolver: resolver)
-        #expect(asc.map(\.id) == ["d-1", "f-hd", "f-4k", "f-unk"])
+        #expect(asc.map(\.id) == ["d-1", "f-hd", "f-4k", "f-unk", "f-zero"])
 
         let desc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .resolution, order: .descending, detailResolver: resolver)
-        #expect(desc.map(\.id) == ["d-1", "f-4k", "f-hd", "f-unk"])
+        #expect(desc.map(\.id) == ["d-1", "f-4k", "f-hd", "f-unk", "f-zero"])
     }
 
     @Test("Duration sorting orders by playback duration in seconds")
@@ -200,21 +202,23 @@ struct MediaSourceItemSortComparatorTests {
         let shortVid = Self.makeItem(id: "f-short", name: "short.mp4", type: .video)
         let longVid = Self.makeItem(id: "f-long", name: "long.mov", type: .video)
         let image = Self.makeItem(id: "f-img", name: "photo.png", type: .image)
+        let zeroVid = Self.makeItem(id: "f-zero", name: "zero.mp4", type: .video)
 
         let resolver: (String) -> (resolution: Int?, duration: Double?) = { id in
             switch id {
             case "f-short": return (nil, 30.0)
             case "f-long": return (nil, 120.0)
+            case "f-zero": return (nil, 0.0)
             default: return (nil, nil)
             }
         }
 
-        let items = [longVid, folder, image, shortVid]
+        let items = [longVid, folder, image, zeroVid, shortVid]
 
         let asc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .duration, order: .ascending, detailResolver: resolver)
-        #expect(asc.map(\.id) == ["d-1", "f-short", "f-long", "f-img"])
+        #expect(asc.map(\.id) == ["d-1", "f-short", "f-long", "f-img", "f-zero"])
 
         let desc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .duration, order: .descending, detailResolver: resolver)
-        #expect(desc.map(\.id) == ["d-1", "f-long", "f-short", "f-img"])
+        #expect(desc.map(\.id) == ["d-1", "f-long", "f-short", "f-img", "f-zero"])
     }
 }
