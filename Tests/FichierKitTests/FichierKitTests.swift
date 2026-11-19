@@ -22,6 +22,9 @@ struct FichierKitTests {
         #expect(photosSource.preferredLayout == .grid)
         #expect(photosSource.supportedSortKeys.contains(.date))
         #expect(photosSource.supportedSortKeys.contains(.name))
+        #expect(photosSource.supportedSortKeys.contains(.kind))
+        #expect(photosSource.supportedSortKeys.contains(.resolution))
+        #expect(photosSource.supportedSortKeys.contains(.duration))
     }
 
     @Test("Verify SharesMediaSource Layout and Root Shares Fetching")
@@ -102,7 +105,10 @@ struct FichierKitTests {
         #expect(MediaSortKey.name.displayTitle == "Filename")
         #expect(MediaSortKey.date.displayTitle == "Date")
         #expect(MediaSortKey.size.displayTitle == "Size")
-        #expect(MediaSortKey.type.displayTitle == "Type")
+        #expect(MediaSortKey.type.displayTitle == "Extension")
+        #expect(MediaSortKey.kind.displayTitle == "Kind")
+        #expect(MediaSortKey.resolution.displayTitle == "Resolution")
+        #expect(MediaSortKey.duration.displayTitle == "Duration")
     }
 
     @Test("Verify DefaultSlideshowSettingsStore Persistence")
@@ -245,7 +251,7 @@ struct FichierKitTests {
         #expect(MediaSortKey.name.displayTitle == "Filename")
         #expect(MediaSortKey.date.displayTitle == "Date")
         #expect(MediaSortKey.size.displayTitle == "Size")
-        #expect(MediaSortKey.type.displayTitle == "Type")
+        #expect(MediaSortKey.type.displayTitle == "Extension")
 
         let server = SavedSMBConnection(host: "192.168.1.50", username: "kevin", lastConnected: Date())
         let mockItems = [

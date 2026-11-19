@@ -11,6 +11,9 @@ public enum MediaSortKey: String, Sendable, CaseIterable, Identifiable, Codable 
     case date
     case size
     case type
+    case kind
+    case resolution
+    case duration
 
     public var id: String { rawValue }
 
@@ -25,6 +28,12 @@ public enum MediaSortKey: String, Sendable, CaseIterable, Identifiable, Codable 
             return String(localized: .sortKeySize)
         case .type:
             return String(localized: .sortKeyType)
+        case .kind:
+            return String(localized: .sortKeyKind)
+        case .resolution:
+            return String(localized: .sortKeyResolution)
+        case .duration:
+            return String(localized: .sortKeyDuration)
         }
     }
 }

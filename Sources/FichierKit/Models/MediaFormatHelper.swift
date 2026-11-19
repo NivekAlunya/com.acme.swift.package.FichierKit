@@ -64,4 +64,46 @@ public enum MediaFormatHelper: Sendable {
         guard pages > 0 else { return "" }
         return pages == 1 ? "1 page" : "\(pages) pages"
     }
+
+    /// Parses a formatted dimensions string (e.g. "3840 × 2160") into pixel width and height.
+    public static func parseDimensions(_ string: String) -> (width: Int, height: Int)? {
+        let separator = string.contains(" × ") ? " × " : (string.contains(" x ") ? " x " : nil)
+        guard let separator else { return nil }
+        let parts = string.components(separatedBy: separator)
+        guard parts.count == 2,
+              let w = Int(parts[0].trimmingCharacters(in: .whitespaces)),
+              let h = Int(parts[1].trimmingCharacters(in: .whitespaces)),
+              w > 0, h > 0 else {
+            return nil
+        }
+        return (w, h)
+    }
+
+    /// Parses a formatted duration string (e.g. "02:45" or "1:15:30") into total seconds.
+    public static func parseDuration(_ string: String) -> Double? {
+        let parts = string.split(separator: ":", omittingEmptySubsequences: false)
+        func parseNonNegativeFinite(_ sub: Substring) -> Double? {
+            let trimmed = sub.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty,
+                  let val = Double(trimmed),
+                  val.isFinite, !val.isNaN, val >= 0 else {
+                return nil
+            }
+            return val
+        }
+
+        switch parts.count {
+        case 2:
+            guard let m = parseNonNegativeFinite(parts[0]),
+                  let s = parseNonNegativeFinite(parts[1]) else { return nil }
+            return m * 60 + s
+        case 3:
+            guard let h = parseNonNegativeFinite(parts[0]),
+                  let m = parseNonNegativeFinite(parts[1]),
+                  let s = parseNonNegativeFinite(parts[2]) else { return nil }
+            return h * 3600 + m * 60 + s
+        default:
+            return nil
+        }
+    }
 }

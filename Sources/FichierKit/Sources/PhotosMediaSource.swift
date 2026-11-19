@@ -14,7 +14,7 @@ public final class PhotosMediaSource: MediaSource, Sendable {
     public let id: String = "photos"
     public let displayName: String = "Photos"
     public let preferredLayout: MediaSourceLayout = .grid
-    public let supportedSortKeys: Set<MediaSortKey> = [.date, .name]
+    public let supportedSortKeys: Set<MediaSortKey> = [.date, .name, .kind, .resolution, .duration]
 
     public init() {}
 
@@ -184,7 +184,7 @@ public final class PhotosMediaSource: MediaSource, Sendable {
             return items
         }
 
-        // PhotoKit rejects `filename` in PHFetchOptions.sortDescriptors, so fetch and sort by resolved filename in memory.
+        // PhotoKit in-memory sort for name, kind, resolution, duration
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         let fetchResult = PHAsset.fetchAssets(in: collection, options: options)
         let totalCount = fetchResult.count
@@ -196,14 +196,64 @@ public final class PhotosMediaSource: MediaSource, Sendable {
             namedAssets.append((asset, Self.resolveAssetFileName(asset)))
         }
 
-        namedAssets.sort { lhs, rhs in
+        func breakTieByNameThenID(
+            _ lhs: (asset: PHAsset, fileName: String),
+            _ rhs: (asset: PHAsset, fileName: String)
+        ) -> Bool {
             let cmp = lhs.fileName.localizedStandardCompare(rhs.fileName)
             if cmp == .orderedSame {
-                return isAscending
-                    ? lhs.asset.localIdentifier < rhs.asset.localIdentifier
-                    : lhs.asset.localIdentifier > rhs.asset.localIdentifier
+                return lhs.asset.localIdentifier < rhs.asset.localIdentifier
             }
-            return isAscending ? cmp == .orderedAscending : cmp == .orderedDescending
+            return cmp == .orderedAscending
+        }
+
+        namedAssets.sort { lhs, rhs in
+            switch sortKey {
+            case .name:
+                let cmp = lhs.fileName.localizedStandardCompare(rhs.fileName)
+                if cmp == .orderedSame {
+                    return isAscending
+                        ? lhs.asset.localIdentifier < rhs.asset.localIdentifier
+                        : lhs.asset.localIdentifier > rhs.asset.localIdentifier
+                }
+                return isAscending ? cmp == .orderedAscending : cmp == .orderedDescending
+            case .kind:
+                let lKind = lhs.asset.mediaType == .image ? 0 : 1
+                let rKind = rhs.asset.mediaType == .image ? 0 : 1
+                if lKind != rKind {
+                    return isAscending ? lKind < rKind : lKind > rKind
+                }
+                return breakTieByNameThenID(lhs, rhs)
+            case .resolution:
+                let (lMult, lOverflow) = lhs.asset.pixelWidth.multipliedReportingOverflow(by: lhs.asset.pixelHeight)
+                let (rMult, rOverflow) = rhs.asset.pixelWidth.multipliedReportingOverflow(by: rhs.asset.pixelHeight)
+                let lRes = lOverflow ? 0 : lMult
+                let rRes = rOverflow ? 0 : rMult
+                if lRes <= 0 && rRes <= 0 {
+                    return breakTieByNameThenID(lhs, rhs)
+                }
+                if lRes <= 0 { return false }
+                if rRes <= 0 { return true }
+                if lRes != rRes {
+                    return isAscending ? lRes < rRes : lRes > rRes
+                }
+                return breakTieByNameThenID(lhs, rhs)
+            case .duration:
+                let lDur = lhs.asset.duration
+                let rDur = rhs.asset.duration
+                if lDur <= 0 && rDur <= 0 {
+                    return breakTieByNameThenID(lhs, rhs)
+                }
+                if lDur <= 0 { return false }
+                if rDur <= 0 { return true }
+                if lDur != rDur {
+                    return isAscending ? lDur < rDur : lDur > rDur
+                }
+                return breakTieByNameThenID(lhs, rhs)
+            default:
+                let cmp = lhs.fileName.localizedStandardCompare(rhs.fileName)
+                return isAscending ? cmp == .orderedAscending : cmp == .orderedDescending
+            }
         }
 
         let startIndex = page * pageSize

@@ -119,6 +119,115 @@ struct MediaDetailStoreTests {
         #expect(detail == nil)
     }
 
+    @Test("Parse duration handles valid and invalid inputs safely")
+    func testParseDurationEdgeCases() {
+        // Valid inputs
+        #expect(MediaFormatHelper.parseDuration("00:00") == 0.0)
+        #expect(MediaFormatHelper.parseDuration("02:45") == 165.0)
+        #expect(MediaFormatHelper.parseDuration("1:15:30") == 4530.0)
+        #expect(MediaFormatHelper.parseDuration("  03:10  ") == 190.0)
+
+        // Invalid inputs that must return nil without traps
+        #expect(MediaFormatHelper.parseDuration("NaN") == nil)
+        #expect(MediaFormatHelper.parseDuration("inf") == nil)
+        #expect(MediaFormatHelper.parseDuration("Infinity") == nil)
+        #expect(MediaFormatHelper.parseDuration("-05:00") == nil)
+        #expect(MediaFormatHelper.parseDuration("02::45") == nil)
+        #expect(MediaFormatHelper.parseDuration(":02:45") == nil)
+        #expect(MediaFormatHelper.parseDuration("02:45:") == nil)
+        #expect(MediaFormatHelper.parseDuration("1:2:3:4") == nil)
+        #expect(MediaFormatHelper.parseDuration("") == nil)
+        #expect(MediaFormatHelper.parseDuration("invalid") == nil)
+    }
+
+    @Test("Parse dimensions handles valid and invalid inputs safely")
+    func testParseDimensionsEdgeCases() {
+        // Valid inputs with unicode cross and ascii x
+        let d1 = MediaFormatHelper.parseDimensions("3840 × 2160")
+        #expect(d1?.width == 3840 && d1?.height == 2160)
+
+        let d2 = MediaFormatHelper.parseDimensions("1920 x 1080")
+        #expect(d2?.width == 1920 && d2?.height == 1080)
+
+        // Invalid inputs
+        #expect(MediaFormatHelper.parseDimensions("0 × 100") == nil)
+        #expect(MediaFormatHelper.parseDimensions("100 × 0") == nil)
+        #expect(MediaFormatHelper.parseDimensions("-100 × 200") == nil)
+        #expect(MediaFormatHelper.parseDimensions("NaN × 100") == nil)
+        #expect(MediaFormatHelper.parseDimensions("3840") == nil)
+        #expect(MediaFormatHelper.parseDimensions("") == nil)
+        #expect(MediaFormatHelper.parseDimensions("invalid") == nil)
+    }
+
+    @Test("MediaDetailStore caches parsed numeric resolution and duration")
+    @MainActor
+    func testMediaDetailStoreNumericCaching() {
+        let store = MediaDetailStore.shared
+        store.clearCache()
+
+        let imgID = "img-item"
+        let vidID = "vid-item"
+
+        store.registerDetail("3840 × 2160", for: imgID)
+        #expect(store.resolution(for: imgID) == 3840 * 2160)
+        #expect(store.dimensions(for: imgID)?.width == 3840)
+        #expect(store.duration(for: imgID) == nil)
+
+        store.registerDetail("02:30", for: vidID)
+        #expect(store.duration(for: vidID) == 150.0)
+        #expect(store.resolution(for: vidID) == nil)
+
+        store.clearCache()
+        #expect(store.resolution(for: imgID) == nil)
+        #expect(store.duration(for: vidID) == nil)
+    }
+
+    @Test("MediaDetailStore prevents integer overflow and clears stale numeric caches")
+    @MainActor
+    func testMediaDetailStoreOverflowAndCacheConsistency() {
+        let store = MediaDetailStore.shared
+        store.clearCache()
+
+        let itemID = "multimedia-item"
+
+        // 1. Initial registration with resolution (image)
+        store.registerDetail("1920 × 1080", for: itemID)
+        #expect(store.resolution(for: itemID) == 1920 * 1080)
+        #expect(store.duration(for: itemID) == nil)
+
+        // 2. Overwrite with duration (e.g. item re-classified as video): resolution cache must be cleared
+        store.registerDetail("01:30", for: itemID)
+        #expect(store.cachedDetail(for: itemID) == "01:30")
+        #expect(store.resolution(for: itemID) == nil)
+        #expect(store.duration(for: itemID) == 90.0)
+
+        // 3. Overwrite with document page count: duration cache must also be cleared
+        store.registerDetail("12 pages", for: itemID)
+        #expect(store.cachedDetail(for: itemID) == "12 pages")
+        #expect(store.resolution(for: itemID) == nil)
+        #expect(store.duration(for: itemID) == nil)
+
+        // 4. Overflow protection: dimensions that exceed Int bounds must not trap and return nil
+        let overflowID = "overflow-item"
+        store.registerDetail("\(Int.max) × 2", for: overflowID)
+        #expect(store.resolution(for: overflowID) == nil)
+    }
+
+    @Test("MediaSortKey CaseIterable and Codable round-trip")
+    func testMediaSortKeyCodable() throws {
+        #expect(MediaSortKey.allCases.count == 7)
+        #expect(MediaSortKey.allCases == [.name, .date, .size, .type, .kind, .resolution, .duration])
+
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        for key in MediaSortKey.allCases {
+            let data = try encoder.encode(key)
+            let decoded = try decoder.decode(MediaSortKey.self, from: data)
+            #expect(decoded == key)
+        }
+    }
+
     @Test("Concurrent resolution queries for the same item are deduplicated")
     @MainActor
     func testConcurrentResolutionDeduplication() async {

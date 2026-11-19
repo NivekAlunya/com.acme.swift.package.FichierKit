@@ -5,6 +5,7 @@
 //
 
 import Foundation
+import Observation
 import AVFoundation
 #if canImport(CoreGraphics)
 import CoreGraphics
@@ -12,16 +13,20 @@ import CoreGraphics
 #if canImport(ImageIO)
 import ImageIO
 #endif
-#if canImport(Photos) && !os(tvOS)
+#if canImport(Photos)
 import Photos
 #endif
 
 /// Thread-safe coordinator and memory cache providing lightweight, non-blocking media metadata
 /// descriptors (video duration, image frame dimensions, and PDF page counts) for list and grid cells.
+@Observable
 @MainActor
 public final class MediaDetailStore: Sendable {
     /// Shared singleton instance.
     public static let shared = MediaDetailStore()
+
+    /// Reactive revision counter incremented on every cache registration or eviction to notify observing views.
+    public private(set) var revision: Int = 0
 
     /// Shared queue used by AVAssetResourceLoader delegate callbacks during video metadata probing.
     // swiftlint:disable:next no_legacy_dispatch_queue
@@ -30,6 +35,20 @@ public final class MediaDetailStore: Sendable {
     /// In-memory cache holding resolved detail strings keyed by item ID.
     private let cache: NSCache<NSString, NSString> = {
         let c = NSCache<NSString, NSString>()
+        c.countLimit = 2000
+        return c
+    }()
+
+    /// Fast numeric cache for parsed pixel resolution keyed by item ID.
+    private let parsedResolutionCache: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>()
+        c.countLimit = 2000
+        return c
+    }()
+
+    /// Fast numeric cache for parsed video duration in seconds keyed by item ID.
+    private let parsedDurationCache: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>()
         c.countLimit = 2000
         return c
     }()
@@ -46,15 +65,72 @@ public final class MediaDetailStore: Sendable {
         cache.object(forKey: itemID as NSString) as String?
     }
 
+    /// Returns the pixel resolution (width * height) if resolved and cached for the item ID.
+    public func resolution(for itemID: String) -> Int? {
+        let key = itemID as NSString
+        if let num = parsedResolutionCache.object(forKey: key) {
+            return num.intValue
+        }
+        if let (w, h) = dimensions(for: itemID), w > 0, h > 0 {
+            let (res, overflow) = w.multipliedReportingOverflow(by: h)
+            guard !overflow else { return nil }
+            parsedResolutionCache.setObject(NSNumber(value: res), forKey: key)
+            return res
+        }
+        return nil
+    }
+
+    /// Returns the pixel width and height if resolved and cached for the item ID.
+    public func dimensions(for itemID: String) -> (width: Int, height: Int)? {
+        if let cached = cachedDetail(for: itemID) {
+            return MediaFormatHelper.parseDimensions(cached)
+        }
+        return nil
+    }
+
+    /// Returns the duration in seconds if resolved and cached for the item ID.
+    public func duration(for itemID: String) -> Double? {
+        let key = itemID as NSString
+        if let num = parsedDurationCache.object(forKey: key) {
+            return num.doubleValue
+        }
+        if let cached = cachedDetail(for: itemID),
+           let parsed = MediaFormatHelper.parseDuration(cached) {
+            parsedDurationCache.setObject(NSNumber(value: parsed), forKey: key)
+            return parsed
+        }
+        return nil
+    }
+
     /// Stores a resolved media detail descriptor in the in-memory cache.
     public func registerDetail(_ detail: String, for itemID: String) {
         guard !detail.isEmpty else { return }
-        cache.setObject(detail as NSString, forKey: itemID as NSString)
+        let key = itemID as NSString
+        cache.setObject(detail as NSString, forKey: key)
+        if let (w, h) = MediaFormatHelper.parseDimensions(detail), w > 0, h > 0 {
+            let (res, overflow) = w.multipliedReportingOverflow(by: h)
+            if !overflow {
+                parsedResolutionCache.setObject(NSNumber(value: res), forKey: key)
+            } else {
+                parsedResolutionCache.removeObject(forKey: key)
+            }
+        } else {
+            parsedResolutionCache.removeObject(forKey: key)
+        }
+        if let dur = MediaFormatHelper.parseDuration(detail), dur > 0 {
+            parsedDurationCache.setObject(NSNumber(value: dur), forKey: key)
+        } else {
+            parsedDurationCache.removeObject(forKey: key)
+        }
+        revision &+= 1
     }
 
     /// Clears all cached media detail records.
     public func clearCache() {
         cache.removeAllObjects()
+        parsedResolutionCache.removeAllObjects()
+        parsedDurationCache.removeAllObjects()
+        revision &+= 1
     }
 
     // MARK: - Asynchronous Resolution
@@ -104,7 +180,7 @@ public final class MediaDetailStore: Sendable {
         guard !Task.isCancelled, item.type != .folder else { return nil }
 
         // 1. PhotoKit Library Asset (instantaneous metadata lookup)
-        #if canImport(Photos) && !os(tvOS)
+        #if canImport(Photos)
         if let phID = item.phAssetIdentifier {
             let fetch = PHAsset.fetchAssets(withLocalIdentifiers: [phID], options: nil)
             if let asset = fetch.firstObject {
@@ -176,7 +252,7 @@ public final class MediaDetailStore: Sendable {
                 Self.parsePrefixImageDimensions(data: prefix)
             }.value
         } else if SupportedMediaTypes.isVideo(extension: ext) && !SupportedMediaTypes.isExtendedVideo(extension: ext) {
-            // Fast AVURLAsset probe over SMBAVAssetResourceLoaderDelegate with strict 1.5s timeout
+            // Fast AVURLAsset probe over SMBAVAssetResourceLoaderDelegate with 3.0s timeout
             let streamURL = SMBAVAssetResourceLoaderDelegate.makeStreamURL(fileName: item.name)
             let delegate = SMBAVAssetResourceLoaderDelegate(
                 client: sharesSource.client,
@@ -199,7 +275,7 @@ public final class MediaDetailStore: Sendable {
                     try? await asset.load(.duration).seconds
                 }
                 group.addTask {
-                    try? await Task.sleep(for: .milliseconds(1500))
+                    try? await Task.sleep(for: .milliseconds(3000))
                     // Cancel delegate and asset immediately on timeout to abort network I/O and unblock group join
                     delegate.cancelAll()
                     asset.cancelLoading()
