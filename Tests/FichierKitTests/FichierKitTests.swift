@@ -102,7 +102,10 @@ struct FichierKitTests {
         #expect(MediaSortKey.name.displayTitle == "Filename")
         #expect(MediaSortKey.date.displayTitle == "Date")
         #expect(MediaSortKey.size.displayTitle == "Size")
-        #expect(MediaSortKey.type.displayTitle == "Type")
+        #expect(MediaSortKey.type.displayTitle == "Extension")
+        #expect(MediaSortKey.kind.displayTitle == "Kind")
+        #expect(MediaSortKey.resolution.displayTitle == "Resolution")
+        #expect(MediaSortKey.duration.displayTitle == "Duration")
     }
 
     @Test("Verify DefaultSlideshowSettingsStore Persistence")
@@ -245,7 +248,7 @@ struct FichierKitTests {
         #expect(MediaSortKey.name.displayTitle == "Filename")
         #expect(MediaSortKey.date.displayTitle == "Date")
         #expect(MediaSortKey.size.displayTitle == "Size")
-        #expect(MediaSortKey.type.displayTitle == "Type")
+        #expect(MediaSortKey.type.displayTitle == "Extension")
 
         let server = SavedSMBConnection(host: "192.168.1.50", username: "kevin", lastConnected: Date())
         let mockItems = [

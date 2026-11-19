@@ -17,7 +17,7 @@ public final class SharesMediaSource: MediaSource, Sendable {
     public var id: String { server.id }
     public var displayName: String { server.displayName }
     public let preferredLayout: MediaSourceLayout = .list
-    public let supportedSortKeys: Set<MediaSortKey> = [.name, .date, .size, .type]
+    public let supportedSortKeys: Set<MediaSortKey> = [.name, .date, .size, .type, .kind, .resolution, .duration]
 
     private let cursorStore = SharesCursorStore()
 

@@ -51,6 +51,30 @@ public final class MediaDetailStore: Sendable {
         cache.object(forKey: itemID as NSString) as String?
     }
 
+    /// Returns the pixel resolution (width * height) if resolved and cached for the item ID.
+    public func resolution(for itemID: String) -> Int? {
+        if let (w, h) = dimensions(for: itemID) {
+            return w * h
+        }
+        return nil
+    }
+
+    /// Returns the pixel width and height if resolved and cached for the item ID.
+    public func dimensions(for itemID: String) -> (width: Int, height: Int)? {
+        if let cached = cachedDetail(for: itemID) {
+            return MediaFormatHelper.parseDimensions(cached)
+        }
+        return nil
+    }
+
+    /// Returns the duration in seconds if resolved and cached for the item ID.
+    public func duration(for itemID: String) -> Double? {
+        if let cached = cachedDetail(for: itemID) {
+            return MediaFormatHelper.parseDuration(cached)
+        }
+        return nil
+    }
+
     /// Stores a resolved media detail descriptor in the in-memory cache.
     public func registerDetail(_ detail: String, for itemID: String) {
         guard !detail.isEmpty else { return }

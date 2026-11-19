@@ -64,4 +64,33 @@ public enum MediaFormatHelper: Sendable {
         guard pages > 0 else { return "" }
         return pages == 1 ? "1 page" : "\(pages) pages"
     }
+
+    /// Parses a formatted dimensions string (e.g. "3840 × 2160") into pixel width and height.
+    public static func parseDimensions(_ string: String) -> (width: Int, height: Int)? {
+        let parts = string.components(separatedBy: " × ")
+        guard parts.count == 2,
+              let w = Int(parts[0].trimmingCharacters(in: .whitespaces)),
+              let h = Int(parts[1].trimmingCharacters(in: .whitespaces)),
+              w > 0, h > 0 else {
+            return nil
+        }
+        return (w, h)
+    }
+
+    /// Parses a formatted duration string (e.g. "02:45" or "1:15:30") into total seconds.
+    public static func parseDuration(_ string: String) -> Double? {
+        let parts = string.split(separator: ":")
+        guard parts.count >= 2 else { return nil }
+        if parts.count == 2,
+           let m = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+           let s = Double(parts[1].trimmingCharacters(in: .whitespaces)) {
+            return m * 60 + s
+        } else if parts.count == 3,
+                  let h = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+                  let m = Double(parts[1].trimmingCharacters(in: .whitespaces)),
+                  let s = Double(parts[2].trimmingCharacters(in: .whitespaces)) {
+            return h * 3600 + m * 60 + s
+        }
+        return nil
+    }
 }

@@ -153,4 +153,68 @@ struct MediaSourceItemSortComparatorTests {
         #expect(MediaSourceItemSortComparator.sortFoldersFirst(items.reversed(), sortBy: .type, order: .ascending) == asc)
         #expect(MediaSourceItemSortComparator.sortFoldersFirst(desc, sortBy: .type, order: .descending) == desc)
     }
+
+    @Test("Kind sorting groups by category (Images, Videos, Documents) keeping folders first")
+    func testSortByKindAscendingAndDescending() {
+        let folder = Self.makeItem(id: "d-1", name: "Folder", type: .folder)
+        let pdf = Self.makeItem(id: "f-doc", name: "manual.pdf", type: .image)
+        let video = Self.makeItem(id: "f-vid", name: "clip.mp4", type: .video)
+        let image = Self.makeItem(id: "f-img", name: "photo.jpg", type: .image)
+
+        let items = [pdf, folder, video, image]
+
+        let asc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .kind, order: .ascending)
+        #expect(asc.map(\.id) == ["d-1", "f-img", "f-vid", "f-doc"])
+
+        let desc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .kind, order: .descending)
+        #expect(desc.map(\.id) == ["d-1", "f-doc", "f-vid", "f-img"])
+    }
+
+    @Test("Resolution sorting orders by total pixel count")
+    func testSortByResolutionAscendingAndDescending() {
+        let folder = Self.makeItem(id: "d-1", name: "Folder", type: .folder)
+        let hd = Self.makeItem(id: "f-hd", name: "hd.jpg", type: .image)
+        let fourK = Self.makeItem(id: "f-4k", name: "4k.jpg", type: .image)
+        let unk = Self.makeItem(id: "f-unk", name: "unknown.jpg", type: .image)
+
+        let resolver: (String) -> (resolution: Int?, duration: Double?) = { id in
+            switch id {
+            case "f-hd": return (1920 * 1080, nil)
+            case "f-4k": return (3840 * 2160, nil)
+            default: return (nil, nil)
+            }
+        }
+
+        let items = [hd, folder, unk, fourK]
+
+        let asc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .resolution, order: .ascending, detailResolver: resolver)
+        #expect(asc.map(\.id) == ["d-1", "f-hd", "f-4k", "f-unk"])
+
+        let desc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .resolution, order: .descending, detailResolver: resolver)
+        #expect(desc.map(\.id) == ["d-1", "f-4k", "f-hd", "f-unk"])
+    }
+
+    @Test("Duration sorting orders by playback duration in seconds")
+    func testSortByDurationAscendingAndDescending() {
+        let folder = Self.makeItem(id: "d-1", name: "Folder", type: .folder)
+        let shortVid = Self.makeItem(id: "f-short", name: "short.mp4", type: .video)
+        let longVid = Self.makeItem(id: "f-long", name: "long.mov", type: .video)
+        let image = Self.makeItem(id: "f-img", name: "photo.png", type: .image)
+
+        let resolver: (String) -> (resolution: Int?, duration: Double?) = { id in
+            switch id {
+            case "f-short": return (nil, 30.0)
+            case "f-long": return (nil, 120.0)
+            default: return (nil, nil)
+            }
+        }
+
+        let items = [longVid, folder, image, shortVid]
+
+        let asc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .duration, order: .ascending, detailResolver: resolver)
+        #expect(asc.map(\.id) == ["d-1", "f-short", "f-long", "f-img"])
+
+        let desc = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: .duration, order: .descending, detailResolver: resolver)
+        #expect(desc.map(\.id) == ["d-1", "f-long", "f-short", "f-img"])
+    }
 }

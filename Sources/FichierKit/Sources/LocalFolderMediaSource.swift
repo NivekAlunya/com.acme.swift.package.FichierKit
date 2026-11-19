@@ -23,7 +23,7 @@ public final class LocalFolderMediaSource: MediaSource, Sendable {
     public let preferredLayout: MediaSourceLayout
 
     /// Set of sort keys supported by this local source.
-    public let supportedSortKeys: Set<MediaSortKey> = [.name, .date, .size, .type]
+    public let supportedSortKeys: Set<MediaSortKey> = [.name, .date, .size, .type, .kind, .resolution, .duration]
 
     var fileManager: FileManager { .default }
 

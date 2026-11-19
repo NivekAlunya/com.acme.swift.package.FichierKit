@@ -14,7 +14,7 @@ public final class PhotosMediaSource: MediaSource, Sendable {
     public let id: String = "photos"
     public let displayName: String = "Photos"
     public let preferredLayout: MediaSourceLayout = .grid
-    public let supportedSortKeys: Set<MediaSortKey> = [.date, .name]
+    public let supportedSortKeys: Set<MediaSortKey> = [.date, .name, .kind, .resolution, .duration]
 
     public init() {}
 
@@ -184,7 +184,7 @@ public final class PhotosMediaSource: MediaSource, Sendable {
             return items
         }
 
-        // PhotoKit rejects `filename` in PHFetchOptions.sortDescriptors, so fetch and sort by resolved filename in memory.
+        // PhotoKit in-memory sort for name, kind, resolution, duration
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         let fetchResult = PHAsset.fetchAssets(in: collection, options: options)
         let totalCount = fetchResult.count
@@ -197,13 +197,50 @@ public final class PhotosMediaSource: MediaSource, Sendable {
         }
 
         namedAssets.sort { lhs, rhs in
-            let cmp = lhs.fileName.localizedStandardCompare(rhs.fileName)
-            if cmp == .orderedSame {
-                return isAscending
-                    ? lhs.asset.localIdentifier < rhs.asset.localIdentifier
-                    : lhs.asset.localIdentifier > rhs.asset.localIdentifier
+            switch sortKey {
+            case .name:
+                let cmp = lhs.fileName.localizedStandardCompare(rhs.fileName)
+                if cmp == .orderedSame {
+                    return isAscending
+                        ? lhs.asset.localIdentifier < rhs.asset.localIdentifier
+                        : lhs.asset.localIdentifier > rhs.asset.localIdentifier
+                }
+                return isAscending ? cmp == .orderedAscending : cmp == .orderedDescending
+            case .kind:
+                let lKind = lhs.asset.mediaType == .image ? 0 : 1
+                let rKind = rhs.asset.mediaType == .image ? 0 : 1
+                if lKind != rKind {
+                    return isAscending ? lKind < rKind : lKind > rKind
+                }
+                return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+            case .resolution:
+                let lRes = lhs.asset.pixelWidth * lhs.asset.pixelHeight
+                let rRes = rhs.asset.pixelWidth * rhs.asset.pixelHeight
+                if lRes <= 0 && rRes <= 0 {
+                    return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+                }
+                if lRes <= 0 { return false }
+                if rRes <= 0 { return true }
+                if lRes != rRes {
+                    return isAscending ? lRes < rRes : lRes > rRes
+                }
+                return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+            case .duration:
+                let lDur = lhs.asset.duration
+                let rDur = rhs.asset.duration
+                if lDur <= 0 && rDur <= 0 {
+                    return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+                }
+                if lDur <= 0 { return false }
+                if rDur <= 0 { return true }
+                if lDur != rDur {
+                    return isAscending ? lDur < rDur : lDur > rDur
+                }
+                return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
+            default:
+                let cmp = lhs.fileName.localizedStandardCompare(rhs.fileName)
+                return isAscending ? cmp == .orderedAscending : cmp == .orderedDescending
             }
-            return isAscending ? cmp == .orderedAscending : cmp == .orderedDescending
         }
 
         let startIndex = page * pageSize
