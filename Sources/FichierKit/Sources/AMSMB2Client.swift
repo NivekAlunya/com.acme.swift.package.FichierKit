@@ -319,19 +319,9 @@ public actor AMSMB2Client: SMBClientProtocol {
                         )
                     )
                 } else if entry.isRegularFile {
-                    let ext = (name as NSString).pathExtension.lowercased()
-                    guard SupportedMediaTypes.isSupported(extension: ext) else {
+                    let ext = (name as NSString).pathExtension
+                    guard let itemType = MediaItemType.from(extension: ext) else {
                         continue
-                    }
-                    let itemType: MediaItemType
-                    if SupportedMediaTypes.isVideo(extension: ext) {
-                        itemType = .video
-                    } else {
-                        #if !os(tvOS)
-                        itemType = SupportedMediaTypes.isDocument(extension: ext) ? .document : .image
-                        #else
-                        itemType = .image
-                        #endif
                     }
                     results.append(
                         MediaSourceItem(
@@ -492,14 +482,11 @@ public actor AMSMB2Client: SMBClientProtocol {
         return false
     }
 
-    private func performCreateDirectory(share: String, path: String) async throws {
-        let normalized = Self.normalizeRelativePath(path)
-        guard !normalized.isEmpty else {
-            throw FileOperationError.invalidName(path)
-        }
-        try Self.validatePathComponents(normalized)
-        let components = normalized.split(separator: "/")
-
+    private func withWriteRetry(
+        share: String,
+        existingItemName: String? = nil,
+        operation: (any SMB2SessionProtocol) async throws -> Void
+    ) async throws {
         let maxAttempts = 2
         var lastError: Error?
 
@@ -508,7 +495,7 @@ public actor AMSMB2Client: SMBClientProtocol {
             do {
                 let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
                 try Task.checkCancellation()
-                try await mgr.createDirectory(atPath: normalized)
+                try await operation(mgr)
                 directorySnapshot = nil
                 return
             } catch is CancellationError {
@@ -517,14 +504,14 @@ public actor AMSMB2Client: SMBClientProtocol {
                 throw fileOp
             } catch {
                 if Task.isCancelled { throw CancellationError() }
-                if let posix = error as? POSIXError, posix.code == .EEXIST {
-                    let folderName = String(components.last ?? "")
-                    throw FileOperationError.itemAlreadyExists(folderName)
-                }
-                let desc = error.localizedDescription.lowercased()
-                if desc.contains("exists") || desc.contains("already") {
-                    let folderName = String(components.last ?? "")
-                    throw FileOperationError.itemAlreadyExists(folderName)
+                if let itemName = existingItemName {
+                    if let posix = error as? POSIXError, posix.code == .EEXIST {
+                        throw FileOperationError.itemAlreadyExists(itemName)
+                    }
+                    let desc = error.localizedDescription.lowercased()
+                    if desc.contains("exists") || desc.contains("already") {
+                        throw FileOperationError.itemAlreadyExists(itemName)
+                    }
                 }
                 if Self.isPermanentFilesystemError(error) {
                     throw mapError(error, share: share)
@@ -540,6 +527,19 @@ public actor AMSMB2Client: SMBClientProtocol {
         throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
+    private func performCreateDirectory(share: String, path: String) async throws {
+        let normalized = Self.normalizeRelativePath(path)
+        guard !normalized.isEmpty else {
+            throw FileOperationError.invalidName(path)
+        }
+        try Self.validatePathComponents(normalized)
+        let folderName = String(normalized.split(separator: "/").last ?? "")
+
+        try await withWriteRetry(share: share, existingItemName: folderName) { mgr in
+            try await mgr.createDirectory(atPath: normalized)
+        }
+    }
+
     private func performRemoveItem(share: String, path: String) async throws {
         let normalized = Self.normalizeRelativePath(path)
         guard !normalized.isEmpty else {
@@ -547,35 +547,9 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
         try Self.validatePathComponents(normalized)
 
-        let maxAttempts = 2
-        var lastError: Error?
-
-        for attempt in 1...maxAttempts {
-            try Task.checkCancellation()
-            do {
-                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
-                try Task.checkCancellation()
-                try await mgr.removeItem(atPath: normalized)
-                directorySnapshot = nil
-                return
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch let fileOp as FileOperationError {
-                throw fileOp
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                if Self.isPermanentFilesystemError(error) {
-                    throw mapError(error, share: share)
-                }
-                connectedShare = nil
-                lastError = error
-                if attempt < maxAttempts {
-                    try? await Task.sleep(for: .milliseconds(200))
-                }
-            }
+        try await withWriteRetry(share: share) { mgr in
+            try await mgr.removeItem(atPath: normalized)
         }
-
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performMoveItem(share: String, fromPath: String, toPath: String) async throws {
@@ -589,7 +563,6 @@ public actor AMSMB2Client: SMBClientProtocol {
         }
         try Self.validatePathComponents(normFrom)
         try Self.validatePathComponents(normTo)
-        let toComponents = normTo.split(separator: "/")
 
         // Already in destination
         if normFrom == normTo {
@@ -601,44 +574,11 @@ public actor AMSMB2Client: SMBClientProtocol {
             throw FileOperationError.cannotMoveIntoSelf
         }
 
-        let maxAttempts = 2
-        var lastError: Error?
+        let itemName = String(normTo.split(separator: "/").last ?? "")
 
-        for attempt in 1...maxAttempts {
-            try Task.checkCancellation()
-            do {
-                let mgr = try await ensureConnected(to: share, forceReconnect: attempt > 1)
-                try Task.checkCancellation()
-                try await mgr.moveItem(atPath: normFrom, toPath: normTo)
-                directorySnapshot = nil
-                return
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch let fileOp as FileOperationError {
-                throw fileOp
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                if let posix = error as? POSIXError, posix.code == .EEXIST {
-                    let itemName = String(toComponents.last ?? "")
-                    throw FileOperationError.itemAlreadyExists(itemName)
-                }
-                let desc = error.localizedDescription.lowercased()
-                if desc.contains("exists") || desc.contains("already") {
-                    let itemName = String(toComponents.last ?? "")
-                    throw FileOperationError.itemAlreadyExists(itemName)
-                }
-                if Self.isPermanentFilesystemError(error) {
-                    throw mapError(error, share: share)
-                }
-                connectedShare = nil
-                lastError = error
-                if attempt < maxAttempts {
-                    try? await Task.sleep(for: .milliseconds(200))
-                }
-            }
+        try await withWriteRetry(share: share, existingItemName: itemName) { mgr in
+            try await mgr.moveItem(atPath: normFrom, toPath: normTo)
         }
-
-        throw mapError(lastError ?? SMBError.unreachable(server.host), share: share)
     }
 
     private func performDisconnect() async {

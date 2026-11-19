@@ -150,15 +150,7 @@ extension MediaCacheManager {
     /// Asynchronously formats the aggregate disk cache size into a human-readable string (e.g. "124.5 MB").
     public func formattedCacheSize() async -> String {
         let bytes = await calculateTotalCacheSize()
-        return formatByteCount(bytes)
-    }
-    
-    /// Converts a byte integer into a localized string.
-    private func formatByteCount(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useAll]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
+        return MediaFormatHelper.formatByteCount(bytes)
     }
     
     /// Deletes all cached thumbnails and videos, optionally protecting designated URLs.

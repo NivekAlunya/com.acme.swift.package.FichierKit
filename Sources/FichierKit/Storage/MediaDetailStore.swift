@@ -81,7 +81,11 @@ public final class MediaDetailStore: Sendable {
         }
 
         inFlightTasks[item.id] = task
-        let result = await task.value
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         inFlightTasks.removeValue(forKey: item.id)
 
         if let result, !result.isEmpty {
