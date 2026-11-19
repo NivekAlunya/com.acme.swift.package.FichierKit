@@ -340,7 +340,11 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
                     )
                 }
                 if let selected = item.currentMediaSelection.selectedMediaOption(in: audible) {
-                    self.selectedAudioTrack = self.availableAudioTracks.first(where: { $0.title == selected.displayName })
+                    if let selectedIndex = audible.options.firstIndex(where: { $0 === selected || $0 == selected }) {
+                        self.selectedAudioTrack = self.availableAudioTracks[selectedIndex]
+                    } else {
+                        self.selectedAudioTrack = self.availableAudioTracks.first(where: { $0.title == selected.displayName })
+                    }
                 }
             }
 
@@ -356,7 +360,11 @@ public final class AVPlayerEngine: NSObject, PlayerEngine {
                     )
                 }
                 if let selected = item.currentMediaSelection.selectedMediaOption(in: legible) {
-                    self.selectedSubtitleTrack = self.availableSubtitleTracks.first(where: { $0.title == selected.displayName })
+                    if let selectedIndex = legible.options.firstIndex(where: { $0 === selected || $0 == selected }) {
+                        self.selectedSubtitleTrack = self.availableSubtitleTracks[selectedIndex]
+                    } else {
+                        self.selectedSubtitleTrack = self.availableSubtitleTracks.first(where: { $0.title == selected.displayName })
+                    }
                 }
             }
             onTracksChanged?()

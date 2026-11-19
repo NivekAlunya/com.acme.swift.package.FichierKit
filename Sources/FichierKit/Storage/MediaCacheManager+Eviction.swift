@@ -28,20 +28,8 @@ extension MediaCacheManager {
     
     /// Cleans up any orphaned partial download files (`.part`) older than the given duration (default 1 hour).
     public func cleanOrphanedPartFiles(olderThan seconds: TimeInterval = 3600) {
-        let now = Date()
-        for dir in [videosDirectory, documentsDirectory] {
-            guard let enumerator = fileManager.enumerator(
-                at: dir,
-                includingPropertiesForKeys: [.contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-            
-            for case let fileURL as URL in enumerator where fileURL.pathExtension == "part" {
-                if let modDate = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
-                   now.timeIntervalSince(modDate) > seconds {
-                    try? fileManager.removeItem(at: fileURL)
-                }
-            }
+        Task { [diskActor, videosDirectory, documentsDirectory] in
+            await diskActor.cleanOrphanedPartFiles(in: [videosDirectory, documentsDirectory], olderThan: seconds)
         }
     }
     
@@ -49,19 +37,9 @@ extension MediaCacheManager {
     ///
     /// - Parameter protecting: Set of URLs (such as currently playing videos) that must not be evicted.
     public func performMaintenanceSweep(protecting: Set<URL> = []) {
-        cleanOrphanedPartFiles()
-        
-        let freeSpace = systemAvailableFreeSpace()
-        let isLowDiskSpace = freeSpace < 1_500_000_000
-        
-        // Dynamically adjust disk budget according to host volume capacity
-        let videoLimit: Int64 = isLowDiskSpace ? 400_000_000 : 2_000_000_000
-        let docLimit: Int64 = isLowDiskSpace ? 200_000_000 : 1_000_000_000
-        let thumbLimit: Int64 = isLowDiskSpace ? 100_000_000 : 300_000_000
-        
-        evictVideosIfNeeded(limitBytes: videoLimit, keeping: protecting)
-        evictDocumentsIfNeeded(limitBytes: docLimit, keeping: protecting)
-        evictThumbnailsIfNeeded(limitBytes: thumbLimit)
+        Task { [weak self] in
+            await self?.performMaintenanceSweepAsync(protecting: protecting)
+        }
     }
     
     /// Asynchronously runs `performMaintenanceSweep` isolated on `MediaDiskCacheActor`.
@@ -78,46 +56,6 @@ extension MediaCacheManager {
         await diskActor.evictFilesIfNeeded(in: documentsDirectory, limitBytes: docLimit, keeping: protecting)
         await diskActor.evictFilesIfNeeded(in: thumbnailsDirectory, limitBytes: thumbLimit)
     }
-    
-    /// Evicts oldest cached files (FIFO) within a directory if aggregate size exceeds `limitBytes`.
-    private func evictFiles(in directory: URL, limitBytes: Int64, keeping protectedURLs: Set<URL> = []) {
-        guard let enumerator = fileManager.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return }
-
-        var files: [(url: URL, size: Int64, date: Date)] = []
-        var totalSize: Int64 = 0
-
-        for case let fileURL as URL in enumerator {
-            if fileURL.pathExtension == "part" {
-                try? fileManager.removeItem(at: fileURL)
-                continue
-            }
-            guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-                  let size = values.fileSize else { continue }
-            let fileSize = Int64(size)
-            let date = values.contentModificationDate ?? Date.distantPast
-            totalSize += fileSize
-            files.append((url: fileURL, size: fileSize, date: date))
-        }
-
-        guard totalSize > limitBytes else { return }
-
-        files.sort { $0.date < $1.date }
-
-        for file in files {
-            if totalSize <= limitBytes { break }
-            if protectedURLs.contains(file.url) { continue }
-            do {
-                try fileManager.removeItem(at: file.url)
-                totalSize -= file.size
-            } catch {
-                // Ignore failure to remove individual item
-            }
-        }
-    }
 
     /// Evicts oldest cached video files (FIFO) if total video cache size exceeds `limitBytes` (default 2 GB).
     ///
@@ -125,7 +63,9 @@ extension MediaCacheManager {
     ///   - limitBytes: Maximum allowed aggregate size in bytes.
     ///   - protectedURLs: File URLs that must be shielded from eviction.
     public func evictVideosIfNeeded(limitBytes: Int64 = 2_000_000_000, keeping protectedURLs: Set<URL> = []) {
-        evictFiles(in: videosDirectory, limitBytes: limitBytes, keeping: protectedURLs)
+        Task { [diskActor, videosDirectory] in
+            await diskActor.evictFilesIfNeeded(in: videosDirectory, limitBytes: limitBytes, keeping: protectedURLs)
+        }
     }
     
     /// Evicts oldest cached document files (FIFO) if total document cache size exceeds `limitBytes` (default 1 GB).
@@ -134,12 +74,16 @@ extension MediaCacheManager {
     ///   - limitBytes: Maximum allowed aggregate size in bytes.
     ///   - protectedURLs: File URLs that must be shielded from eviction.
     public func evictDocumentsIfNeeded(limitBytes: Int64 = 1_000_000_000, keeping protectedURLs: Set<URL> = []) {
-        evictFiles(in: documentsDirectory, limitBytes: limitBytes, keeping: protectedURLs)
+        Task { [diskActor, documentsDirectory] in
+            await diskActor.evictFilesIfNeeded(in: documentsDirectory, limitBytes: limitBytes, keeping: protectedURLs)
+        }
     }
     
     /// Evicts oldest cached thumbnails if aggregate thumbnail cache exceeds `limitBytes` (default 300 MB).
     public func evictThumbnailsIfNeeded(limitBytes: Int64 = 300_000_000) {
-        evictFiles(in: thumbnailsDirectory, limitBytes: limitBytes)
+        Task { [diskActor, thumbnailsDirectory] in
+            await diskActor.evictFilesIfNeeded(in: thumbnailsDirectory, limitBytes: limitBytes)
+        }
     }
     
     /// Computes aggregate cache size in bytes asynchronously isolated on `MediaDiskCacheActor`.
@@ -155,25 +99,9 @@ extension MediaCacheManager {
     
     /// Deletes all cached thumbnails and videos, optionally protecting designated URLs.
     public func clearAllCache(protecting: Set<URL> = []) {
-        try? fileManager.removeItem(at: thumbnailsDirectory)
-        try? fileManager.removeItem(at: documentsDirectory)
-        
-        if protecting.isEmpty {
-            try? fileManager.removeItem(at: videosDirectory)
-        } else {
-            if let enumerator = fileManager.enumerator(at: videosDirectory, includingPropertiesForKeys: nil) {
-                for case let fileURL as URL in enumerator where !protecting.contains(fileURL) {
-                    try? fileManager.removeItem(at: fileURL)
-                }
-            }
+        Task { [weak self] in
+            await self?.clearAllCacheAsync(protecting: protecting)
         }
-        
-        let attributes: [FileAttributeKey: Any] = [
-            .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication
-        ]
-        try? fileManager.createDirectory(at: thumbnailsDirectory, withIntermediateDirectories: true, attributes: attributes)
-        try? fileManager.createDirectory(at: videosDirectory, withIntermediateDirectories: true, attributes: attributes)
-        try? fileManager.createDirectory(at: documentsDirectory, withIntermediateDirectories: true, attributes: attributes)
     }
     
     /// Asynchronous wrapper for `clearAllCache` executed safely on `MediaDiskCacheActor`.
