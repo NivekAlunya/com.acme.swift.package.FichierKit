@@ -82,29 +82,27 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
     private func sanitizeDecodedRecords(
         _ decoded: [String: VideoPlaybackRecord]
     ) -> [String: VideoPlaybackRecord] {
-        var valid: [String: VideoPlaybackRecord] = [:]
-        for (id, record) in decoded {
+        decoded.compactMapValues { record in
             var rec = record
             if rec.duration > 0 && (rec.position >= rec.duration - 4.0 || rec.progress >= 0.90) {
                 rec.isFinished = true
             }
             if rec.isFinished {
                 if rec.duration >= 2.0 || rec.position >= 2.0 {
-                    valid[id] = rec
+                    return rec
                 }
             } else if rec.position >= 2.0 {
-                valid[id] = rec
+                return rec
             }
+            return nil
         }
-        return valid
     }
 
     private func migrateLegacyV1Positions(_ legacy: [String: Double]) -> [String: VideoPlaybackRecord] {
-        var migrated: [String: VideoPlaybackRecord] = [:]
-        for (id, pos) in legacy where pos >= 3.0 {
-            migrated[id] = VideoPlaybackRecord(position: pos, duration: 0, isFinished: false)
+        legacy.compactMapValues { pos in
+            guard pos >= 3.0 else { return nil }
+            return VideoPlaybackRecord(position: pos, duration: 0, isFinished: false)
         }
-        return migrated
     }
 
     private func migrateTVLegacyPositions() {
