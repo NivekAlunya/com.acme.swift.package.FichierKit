@@ -37,21 +37,21 @@ nonisolated public enum AnimatedImageDecoder: Sendable {
         }
         
         var images: [UIImage] = []
+        images.reserveCapacity(count)
         var totalDuration: Double = 0
-        
+
         for i in 0..<count {
             guard let cgImage = CGImageSourceCreateImageAtIndex(source, i, nil) else { continue }
-            
-            let frameDuration = getFrameDuration(from: source, at: i)
-            totalDuration += frameDuration
             images.append(UIImage(cgImage: cgImage))
+            totalDuration += getFrameDuration(from: source, at: i)
         }
-        
-        if totalDuration <= 0 {
-            totalDuration = Double(count) * 0.1
+
+        guard !images.isEmpty else {
+            return UIImage(data: data)
         }
-        
-        return UIImage.animatedImage(with: images, duration: totalDuration) ?? UIImage(data: data)
+
+        let duration = totalDuration <= 0 ? Double(count) * 0.1 : totalDuration
+        return UIImage.animatedImage(with: images, duration: duration) ?? UIImage(data: data)
     }
     
     /// Extracts the display delay duration (in seconds) for a specific frame index from GIF or WebP property dictionaries.

@@ -83,14 +83,9 @@ public final class LocalFolderMediaSource: MediaSource, Sendable {
             options: [.skipsHiddenFiles]
         )
 
-        var items: [MediaSourceItem] = []
-        items.reserveCapacity(contents.count)
-
-        for url in contents {
+        let items = try contents.compactMap { url in
             try Task.checkCancellation()
-            if let item = createMediaSourceItem(at: url, in: folder) {
-                items.append(item)
-            }
+            return createMediaSourceItem(at: url, in: folder)
         }
 
         let sorted = MediaSourceItemSortComparator.sortFoldersFirst(items, sortBy: sortKey, order: sortOrder)

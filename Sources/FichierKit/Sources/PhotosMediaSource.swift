@@ -175,13 +175,10 @@ public final class PhotosMediaSource: MediaSource, Sendable {
             guard startIndex < totalCount else { return [] }
             let endIndex = min(startIndex + pageSize, totalCount)
 
-            var items: [MediaSourceItem] = []
-            items.reserveCapacity(endIndex - startIndex)
-            for index in startIndex..<endIndex {
+            return (startIndex..<endIndex).map { index in
                 let asset = fetchResult.object(at: index)
-                items.append(makeMediaSourceItem(for: asset, fileName: Self.resolveAssetFileName(asset)))
+                return makeMediaSourceItem(for: asset, fileName: Self.resolveAssetFileName(asset))
             }
-            return items
         }
 
         // PhotoKit in-memory sort for name, kind, resolution, duration

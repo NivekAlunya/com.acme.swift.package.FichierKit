@@ -287,14 +287,11 @@ public actor AMSMB2Client: SMBClientProtocol {
             let entries = try await mgr.directoryEntries(atPath: normalizedPath)
             try Task.checkCancellation()
 
-            var results: [MediaSourceItem] = []
-            results.reserveCapacity(entries.count)
-
-            for entry in entries {
+            let results = try entries.compactMap { entry -> MediaSourceItem? in
                 if Task.isCancelled { throw CancellationError() }
                 guard let name = entry.name,
                       !name.hasPrefix(".") else {
-                    continue
+                    return nil
                 }
 
                 let entryPath = entry.path
@@ -305,38 +302,35 @@ public actor AMSMB2Client: SMBClientProtocol {
                 let itemID = "\(server.id)|\(share)::/\(cleanRelativePath)"
 
                 if entry.isDirectory {
-                    results.append(
-                        MediaSourceItem(
-                            id: itemID,
-                            name: name,
-                            path: fullPath,
-                            type: .folder,
-                            size: 0,
-                            modifiedDate: modifiedDate,
-                            sourceID: server.id,
-                            smbShare: share,
-                            smbPath: cleanRelativePath
-                        )
+                    return MediaSourceItem(
+                        id: itemID,
+                        name: name,
+                        path: fullPath,
+                        type: .folder,
+                        size: 0,
+                        modifiedDate: modifiedDate,
+                        sourceID: server.id,
+                        smbShare: share,
+                        smbPath: cleanRelativePath
                     )
                 } else if entry.isRegularFile {
                     let ext = (name as NSString).pathExtension
                     guard let itemType = MediaItemType.from(extension: ext) else {
-                        continue
+                        return nil
                     }
-                    results.append(
-                        MediaSourceItem(
-                            id: itemID,
-                            name: name,
-                            path: fullPath,
-                            type: itemType,
-                            size: entry.fileSize,
-                            modifiedDate: modifiedDate,
-                            sourceID: server.id,
-                            smbShare: share,
-                            smbPath: cleanRelativePath
-                        )
+                    return MediaSourceItem(
+                        id: itemID,
+                        name: name,
+                        path: fullPath,
+                        type: itemType,
+                        size: entry.fileSize,
+                        modifiedDate: modifiedDate,
+                        sourceID: server.id,
+                        smbShare: share,
+                        smbPath: cleanRelativePath
                     )
                 }
+                return nil
             }
 
             return results

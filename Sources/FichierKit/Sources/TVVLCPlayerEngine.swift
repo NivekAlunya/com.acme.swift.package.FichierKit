@@ -571,20 +571,16 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
             return
         }
 
-        var nextChapters: [PlayerChapter] = []
-        nextChapters.reserveCapacity(descriptions.count)
-        for (idx, desc) in descriptions.enumerated() {
+        let nextChapters = descriptions.enumerated().map { idx, desc in
             let startSec = max(0, Double(desc.timeOffset.intValue) / 1000.0)
             let durSec = max(0, Double(desc.durationTime.intValue) / 1000.0)
             let trimmed = (desc.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let title = trimmed.isEmpty ? String(localized: .playerFallbackChapter(idx + 1)) : trimmed
-            nextChapters.append(
-                PlayerChapter(
-                    id: "vlc_ch_\(desc.titleIndex)_\(desc.chapterIndex)_\(idx)",
-                    title: title,
-                    startTime: startSec,
-                    duration: durSec
-                )
+            return PlayerChapter(
+                id: "vlc_ch_\(desc.titleIndex)_\(desc.chapterIndex)_\(idx)",
+                title: title,
+                startTime: startSec,
+                duration: durSec
             )
         }
 
