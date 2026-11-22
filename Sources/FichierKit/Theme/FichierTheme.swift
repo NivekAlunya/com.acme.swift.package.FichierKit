@@ -27,14 +27,14 @@ public enum FichierTheme {
     /// High-contrast dark ink foreground for use on `#A99BFF` focused pills and badges.
     public static let onAccentDark: Color = Color(red: 0.094, green: 0.078, blue: 0.180)
 
-    /// Connected, active, and success indicator (Seafoam Mint `#8FE3C8` in dark mode, `#2BA882` in light mode).
-    public static let connected: Color = adaptiveColor(
+    /// Secondary brand accent (Seafoam Mint `#8FE3C8` in dark mode, `#2BA882` in light mode).
+    public static let secondaryAccent: Color = adaptiveColor(
         light: (red: 0.169, green: 0.659, blue: 0.510),
         dark: (red: 0.561, green: 0.890, blue: 0.784)
     )
 
-    /// Attention, connecting, and highlight indicator (Warm Peach `#FFBFA0` in dark mode, `#D97248` in light mode).
-    public static let attention: Color = adaptiveColor(
+    /// Tertiary brand accent (Warm Peach `#FFBFA0` in dark mode, `#D97248` in light mode).
+    public static let tertiaryAccent: Color = adaptiveColor(
         light: (red: 0.851, green: 0.447, blue: 0.282),
         dark: (red: 1.000, green: 0.749, blue: 0.627)
     )

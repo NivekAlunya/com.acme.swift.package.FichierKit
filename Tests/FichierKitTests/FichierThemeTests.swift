@@ -14,9 +14,9 @@ import UIKit
 struct FichierThemeTests {
     @Test("Brand semantic colors are distinct")
     func brandColorsAreDistinct() {
-        #expect(FichierTheme.accent != FichierTheme.connected)
-        #expect(FichierTheme.accent != FichierTheme.attention)
-        #expect(FichierTheme.connected != FichierTheme.attention)
+        #expect(FichierTheme.accent != FichierTheme.secondaryAccent)
+        #expect(FichierTheme.accent != FichierTheme.tertiaryAccent)
+        #expect(FichierTheme.secondaryAccent != FichierTheme.tertiaryAccent)
     }
 
     #if canImport(UIKit)
@@ -29,13 +29,13 @@ struct FichierThemeTests {
         let darkAccent = UIColor(FichierTheme.accent).resolvedColor(with: darkTraits)
         #expect(lightAccent != darkAccent)
 
-        let lightConnected = UIColor(FichierTheme.connected).resolvedColor(with: lightTraits)
-        let darkConnected = UIColor(FichierTheme.connected).resolvedColor(with: darkTraits)
-        #expect(lightConnected != darkConnected)
+        let lightSecondary = UIColor(FichierTheme.secondaryAccent).resolvedColor(with: lightTraits)
+        let darkSecondary = UIColor(FichierTheme.secondaryAccent).resolvedColor(with: darkTraits)
+        #expect(lightSecondary != darkSecondary)
 
-        let lightAttention = UIColor(FichierTheme.attention).resolvedColor(with: lightTraits)
-        let darkAttention = UIColor(FichierTheme.attention).resolvedColor(with: darkTraits)
-        #expect(lightAttention != darkAttention)
+        let lightTertiary = UIColor(FichierTheme.tertiaryAccent).resolvedColor(with: lightTraits)
+        let darkTertiary = UIColor(FichierTheme.tertiaryAccent).resolvedColor(with: darkTraits)
+        #expect(lightTertiary != darkTertiary)
     }
     #endif
 }
