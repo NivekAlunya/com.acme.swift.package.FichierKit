@@ -8,7 +8,9 @@ import SwiftUI
 /// Applies the Fichier atmospheric slate-indigo gradient on tvOS and in dark mode on iOS/macOS,
 /// while preserving the native system background in light mode.
 public struct FichierAtmosphericBackgroundModifier: ViewModifier {
+    #if !os(tvOS)
     @Environment(\.colorScheme) private var colorScheme
+    #endif
 
     public init() {}
 
