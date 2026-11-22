@@ -27,6 +27,9 @@ public enum FichierTheme {
     /// High-contrast dark ink foreground for use on `#A99BFF` focused pills and badges.
     public static let onAccentDark: Color = Color(red: 0.094, green: 0.078, blue: 0.180)
 
+    /// Neutral carbon slate (`#1F232A`) for folder badges and dark pill surfaces.
+    public static let carbon: Color = Color(red: 0.122, green: 0.137, blue: 0.165)
+
     /// Secondary brand accent (Seafoam Mint `#8FE3C8` in dark mode, `#2BA882` in light mode).
     public static let secondaryAccent: Color = adaptiveColor(
         light: (red: 0.169, green: 0.659, blue: 0.510),
