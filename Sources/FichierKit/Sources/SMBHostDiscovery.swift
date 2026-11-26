@@ -7,7 +7,7 @@
 import Foundation
 import Network
 import Observation
-import OSLog
+import Wappn
 
 /// Locates SMB servers on the local area network using Bonjour (`_smb._tcp`) and resolves IPv4 addresses.
 ///
@@ -48,12 +48,12 @@ public final class SMBHostDiscovery: SMBHostDiscoveryProtocol {
                 switch state {
                 case .ready:
                     self.errorMessage = nil
-                    FichierKitLog.discovery.info("SMB Bonjour browser active (IPv4)")
+                    logi("SMB Bonjour browser active (IPv4)")
                 case .waiting(let error):
-                    FichierKitLog.discovery.warning("SMB Bonjour browser waiting: \(error.localizedDescription, privacy: .private)")
+                    logw("SMB Bonjour browser waiting: \(error.localizedDescription)")
                     self.errorMessage = "Waiting for local network access: \(error.localizedDescription)"
                 case .failed(let error):
-                    FichierKitLog.discovery.error("SMB Bonjour scan failed: \(error.localizedDescription, privacy: .private)")
+                    loge("SMB Bonjour scan failed: \(error.localizedDescription)")
                     self.errorMessage = "Network discovery failed: \(error.localizedDescription)"
                     self.isScanning = false
                 case .cancelled:

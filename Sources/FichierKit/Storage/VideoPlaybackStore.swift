@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import Wappn
 
 /// Persistent store tracking playback offsets, completion states, and resume positions for video media items.
 ///
@@ -62,7 +63,7 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
                 }
                 persist()
             } catch {
-                FichierKitLog.videoPlaybackStore.error("Failed to decode video playback records from storage: \(error.localizedDescription, privacy: .private)")
+                loge("Failed to decode video playback records from storage: \(error.localizedDescription)")
             }
         } else if let legacyData = userDefaults.data(forKey: legacyKey) {
             do {
@@ -70,7 +71,7 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
                 self.records = migrateLegacyV1Positions(legacyPositions)
                 persist()
             } catch {
-                FichierKitLog.videoPlaybackStore.error("Failed to decode legacy video playback records: \(error.localizedDescription, privacy: .private)")
+                loge("Failed to decode legacy video playback records: \(error.localizedDescription)")
             }
         }
 
@@ -304,7 +305,7 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
             let encoded = try JSONEncoder().encode(records)
             userDefaults.set(encoded, forKey: storageKey)
         } catch {
-            FichierKitLog.videoPlaybackStore.error("Failed to encode video playback records: \(error.localizedDescription, privacy: .private)")
+            loge("Failed to encode video playback records: \(error.localizedDescription)")
         }
     }
 }

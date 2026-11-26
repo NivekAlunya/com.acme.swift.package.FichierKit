@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Wappn
 
 /// Persisted configuration record representing a saved SMB server connection.
 public struct SavedSMBConnection: Identifiable, Codable, Hashable, Sendable {
@@ -43,7 +44,7 @@ public struct SavedSMBConnection: Identifiable, Codable, Hashable, Sendable {
             let decoded = try JSONDecoder().decode([SavedSMBConnection].self, from: data)
             return decoded.sorted { $0.lastConnected > $1.lastConnected }
         } catch {
-            FichierKitLog.savedSMBConnection.error("Failed to decode saved SMB connections: \(error.localizedDescription, privacy: .private)")
+            loge("Failed to decode saved SMB connections: \(error.localizedDescription)")
             return []
         }
     }

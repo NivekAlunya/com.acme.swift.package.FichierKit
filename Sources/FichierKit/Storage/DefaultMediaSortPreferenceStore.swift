@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import os
+import Wappn
 
 /// Actor-isolated `UserDefaults` store remembering the last chosen sort configuration per media source.
 public actor DefaultMediaSortPreferenceStore: MediaSortPreferenceStoreProtocol {
@@ -22,7 +22,7 @@ public actor DefaultMediaSortPreferenceStore: MediaSortPreferenceStoreProtocol {
             let encoded = try JSONEncoder().encode(preference)
             userDefaults.set(encoded, forKey: keyPrefix + sourceID)
         } catch {
-            FichierKitLog.sortPreferenceStore.error("Failed to encode sort preference for \(sourceID, privacy: .private): \(error.localizedDescription, privacy: .private)")
+            loge("Failed to encode sort preference for \(FichierKitLog.redacted(sourceID)): \(error.localizedDescription)")
         }
     }
 
@@ -33,7 +33,7 @@ public actor DefaultMediaSortPreferenceStore: MediaSortPreferenceStoreProtocol {
         do {
             return try JSONDecoder().decode(MediaSortPreference.self, from: data)
         } catch {
-            FichierKitLog.sortPreferenceStore.error("Failed to decode sort preference for \(sourceID, privacy: .private): \(error.localizedDescription, privacy: .private)")
+            loge("Failed to decode sort preference for \(FichierKitLog.redacted(sourceID)): \(error.localizedDescription)")
             return nil
         }
     }

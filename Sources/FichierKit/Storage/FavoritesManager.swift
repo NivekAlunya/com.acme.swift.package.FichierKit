@@ -5,7 +5,7 @@
 
 import Foundation
 import Observation
-import os
+import Wappn
 
 /// Centralized state manager tracking user-favorited media item identifiers across all storage backends.
 ///
@@ -31,7 +31,7 @@ public final class FavoritesManager {
             do {
                 self.favoriteIDs = try JSONDecoder().decode(Set<String>.self, from: data)
             } catch {
-                FichierKitLog.favoritesManager.error("Failed to decode favorites from storage: \(error.localizedDescription, privacy: .private)")
+                loge("Failed to decode favorites from storage: \(error.localizedDescription)")
             }
         }
     }
@@ -68,7 +68,7 @@ public final class FavoritesManager {
             let encoded = try JSONEncoder().encode(favoriteIDs)
             UserDefaults.standard.set(encoded, forKey: storageKey)
         } catch {
-            FichierKitLog.favoritesManager.error("Failed to encode favorites: \(error.localizedDescription, privacy: .private)")
+            loge("Failed to encode favorites: \(error.localizedDescription)")
         }
     }
 }
