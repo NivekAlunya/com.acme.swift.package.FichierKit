@@ -66,9 +66,13 @@ nonisolated public final class MediaCacheManager: Sendable {
         let attributes: [FileAttributeKey: Any] = [
             .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication
         ]
-        try? fm.createDirectory(at: thumbs, withIntermediateDirectories: true, attributes: attributes)
-        try? fm.createDirectory(at: vids, withIntermediateDirectories: true, attributes: attributes)
-        try? fm.createDirectory(at: docs, withIntermediateDirectories: true, attributes: attributes)
+        for directory in [thumbs, vids, docs] {
+            do {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: attributes)
+            } catch {
+                loge("Failed to create cache directory \(directory.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
         
         Task(priority: .background) { [self] in
             await self.performMaintenanceSweepAsync()
