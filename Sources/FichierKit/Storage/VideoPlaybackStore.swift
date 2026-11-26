@@ -5,7 +5,6 @@
 
 import Foundation
 import Observation
-import os
 
 /// Persistent store tracking playback offsets, completion states, and resume positions for video media items.
 ///
@@ -21,7 +20,6 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
 
     /// Global shared singleton instance.
     public static let shared = VideoPlaybackStore()
-    private static let logger = Logger(subsystem: "com.acme.ios.fichierkit", category: "videoPlaybackStore")
 
     /// Observed playback records dictionary powering UI progress bars and status badges in SwiftUI views.
     public private(set) var records: [String: VideoPlaybackRecord] = [:]
@@ -64,7 +62,7 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
                 }
                 persist()
             } catch {
-                Self.logger.error("Failed to decode video playback records from storage: \(error.localizedDescription)")
+                FichierKitLog.videoPlaybackStore.error("Failed to decode video playback records from storage: \(error.localizedDescription, privacy: .private)")
             }
         } else if let legacyData = userDefaults.data(forKey: legacyKey) {
             do {
@@ -72,7 +70,7 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
                 self.records = migrateLegacyV1Positions(legacyPositions)
                 persist()
             } catch {
-                Self.logger.error("Failed to decode legacy video playback records: \(error.localizedDescription)")
+                FichierKitLog.videoPlaybackStore.error("Failed to decode legacy video playback records: \(error.localizedDescription, privacy: .private)")
             }
         }
 
@@ -306,7 +304,7 @@ public final class VideoPlaybackStore: VideoPlaybackStoreProtocol {
             let encoded = try JSONEncoder().encode(records)
             userDefaults.set(encoded, forKey: storageKey)
         } catch {
-            Self.logger.error("Failed to encode video playback records: \(error.localizedDescription)")
+            FichierKitLog.videoPlaybackStore.error("Failed to encode video playback records: \(error.localizedDescription, privacy: .private)")
         }
     }
 }

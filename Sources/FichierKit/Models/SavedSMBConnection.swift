@@ -4,11 +4,9 @@
 //
 
 import Foundation
-import os
 
 /// Persisted configuration record representing a saved SMB server connection.
 public struct SavedSMBConnection: Identifiable, Codable, Hashable, Sendable {
-    private static let logger = Logger(subsystem: "com.acme.ios.fichierkit", category: "savedSMBConnection")
     public var id: String { "\(username)@\(host)" }
     public let host: String
     public let username: String
@@ -45,7 +43,7 @@ public struct SavedSMBConnection: Identifiable, Codable, Hashable, Sendable {
             let decoded = try JSONDecoder().decode([SavedSMBConnection].self, from: data)
             return decoded.sorted { $0.lastConnected > $1.lastConnected }
         } catch {
-            logger.error("Failed to decode saved SMB connections: \(error.localizedDescription)")
+            FichierKitLog.savedSMBConnection.error("Failed to decode saved SMB connections: \(error.localizedDescription, privacy: .private)")
             return []
         }
     }
