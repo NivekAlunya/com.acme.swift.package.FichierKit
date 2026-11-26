@@ -10,7 +10,10 @@ import Foundation
 import VLCKit
 
 /// Adapter bridging `VLCMediaPlayer` playback state and commands to VLCKit's Picture-in-Picture controller.
-public final class VLCPictureInPictureMediaController: NSObject, VLCPictureInPictureMediaControlling, @unchecked Sendable {
+///
+/// Isolated to `@MainActor` because `VLCMediaPlayer` is main-thread-affine and `mediaPlayer` is mutable.
+@MainActor
+public final class VLCPictureInPictureMediaController: NSObject, @preconcurrency VLCPictureInPictureMediaControlling {
     /// Active `VLCMediaPlayer` instance, or `nil` when detached.
     public weak var mediaPlayer: VLCMediaPlayer?
 

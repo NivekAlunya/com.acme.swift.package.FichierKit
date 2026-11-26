@@ -180,7 +180,11 @@ nonisolated public final class MediaCacheManager: Sendable {
                let data = try? Data(contentsOf: legacyURL),
                let image = UIImage(data: data) {
                 if !fileManager.fileExists(atPath: fileURL.path) {
-                    try? fileManager.moveItem(at: legacyURL, to: fileURL)
+                    do {
+                        try fileManager.moveItem(at: legacyURL, to: fileURL)
+                    } catch {
+                        logw("Failed to migrate legacy cached thumbnail \(legacyURL.lastPathComponent): \(error.localizedDescription)")
+                    }
                 } else {
                     try? fileManager.removeItem(at: legacyURL)
                 }

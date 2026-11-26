@@ -7,6 +7,7 @@
 import Foundation
 import Observation
 import AVFoundation
+import Wappn
 #if canImport(CoreGraphics)
 import CoreGraphics
 #endif
@@ -27,10 +28,6 @@ public final class MediaDetailStore: Sendable {
 
     /// Reactive revision counter incremented on every cache registration or eviction to notify observing views.
     public private(set) var revision: Int = 0
-
-    /// Shared queue used by AVAssetResourceLoader delegate callbacks during video metadata probing.
-    // swiftlint:disable:next no_legacy_dispatch_queue
-    private static let videoProbeQueue = DispatchQueue(label: "com.fichierkit.detail.videoProbe", qos: .utility)
 
     /// In-memory cache holding resolved detail strings keyed by item ID.
     private let cache: NSCache<NSString, NSString> = {
@@ -241,12 +238,18 @@ public final class MediaDetailStore: Sendable {
 
         if SupportedMediaTypes.isImage(extension: ext) {
             // Read first 64 KB prefix: sufficient for EXIF header metadata
-            let prefix = try? await sharesSource.client.readFileData(
-                share: share,
-                path: path,
-                maxBytes: 65536
-            )
-            guard let prefix, !prefix.isEmpty else { return nil }
+            let prefix: Data
+            do {
+                prefix = try await sharesSource.client.readFileData(
+                    share: share,
+                    path: path,
+                    maxBytes: 65536
+                )
+            } catch {
+                logw("Failed to read image header prefix for \(FichierKitLog.redacted(path)): \(error.localizedDescription)")
+                return nil
+            }
+            guard !prefix.isEmpty else { return nil }
 
             return await Task.detached(priority: .utility) {
                 Self.parsePrefixImageDimensions(data: prefix)
@@ -262,7 +265,7 @@ public final class MediaDetailStore: Sendable {
                 fileSize: item.size
             )
             let asset = AVURLAsset(url: streamURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
-            asset.resourceLoader.setDelegate(delegate, queue: Self.videoProbeQueue)
+            asset.resourceLoader.setDelegate(delegate, queue: FichierResourceLoaderQueue.shared)
 
             defer {
                 delegate.cancelAll()
