@@ -7,7 +7,7 @@
 import Foundation
 import Network
 import Observation
-import OSLog
+import Wappn
 
 /// Locates SMB servers on the local area network using Bonjour (`_smb._tcp`) and resolves IPv4 addresses.
 ///
@@ -22,8 +22,6 @@ public final class SMBHostDiscovery: SMBHostDiscoveryProtocol {
 
     private var browser: NWBrowser?
     private var pendingConnections: [String: NWConnection] = [:]
-
-    private let logger = Logger(subsystem: "com.acme.ios.fichierkit", category: "discovery")
 
     public init() {}
 
@@ -50,12 +48,12 @@ public final class SMBHostDiscovery: SMBHostDiscoveryProtocol {
                 switch state {
                 case .ready:
                     self.errorMessage = nil
-                    self.logger.info("SMB Bonjour browser active (IPv4)")
+                    logi("SMB Bonjour browser active (IPv4)")
                 case .waiting(let error):
-                    self.logger.warning("SMB Bonjour browser waiting: \(error.localizedDescription)")
+                    logw("SMB Bonjour browser waiting: \(error.localizedDescription)")
                     self.errorMessage = "Waiting for local network access: \(error.localizedDescription)"
                 case .failed(let error):
-                    self.logger.error("SMB Bonjour scan failed: \(error.localizedDescription)")
+                    loge("SMB Bonjour scan failed: \(error.localizedDescription)")
                     self.errorMessage = "Network discovery failed: \(error.localizedDescription)"
                     self.isScanning = false
                 case .cancelled:

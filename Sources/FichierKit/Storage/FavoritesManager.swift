@@ -5,7 +5,7 @@
 
 import Foundation
 import Observation
-import os
+import Wappn
 
 /// Centralized state manager tracking user-favorited media item identifiers across all storage backends.
 ///
@@ -18,7 +18,6 @@ public final class FavoritesManager {
     
     /// Global shared singleton instance.
     public static let shared = FavoritesManager()
-    private static let logger = Logger(subsystem: "com.acme.ios.fichierkit", category: "favoritesManager")
     
     /// The live set of favorited item identifiers.
     public private(set) var favoriteIDs: Set<String> = []
@@ -32,7 +31,7 @@ public final class FavoritesManager {
             do {
                 self.favoriteIDs = try JSONDecoder().decode(Set<String>.self, from: data)
             } catch {
-                Self.logger.error("Failed to decode favorites from storage: \(error.localizedDescription)")
+                loge("Failed to decode favorites from storage: \(error.localizedDescription)")
             }
         }
     }
@@ -69,7 +68,7 @@ public final class FavoritesManager {
             let encoded = try JSONEncoder().encode(favoriteIDs)
             UserDefaults.standard.set(encoded, forKey: storageKey)
         } catch {
-            Self.logger.error("Failed to encode favorites: \(error.localizedDescription)")
+            loge("Failed to encode favorites: \(error.localizedDescription)")
         }
     }
 }

@@ -6,6 +6,7 @@
 
 import Foundation
 import AVFoundation
+import Wappn
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -20,12 +21,6 @@ public actor SMBVideoThumbnailLoader {
 
     /// Canonical bounding pixel dimension shared across list rows and grid cards to avoid duplicate fetches.
     public static let standardMaxDimension: CGFloat = 560
-
-    // swiftlint:disable:next no_legacy_dispatch_queue
-    private static let resourceLoaderQueue = DispatchQueue(
-        label: "com.fichierkit.smb.thumb.resourceloader",
-        qos: .utility
-    )
 
     #if canImport(UIKit)
     private let thumbnailCache: NSCache<NSString, UIImage> = {
@@ -189,7 +184,12 @@ public actor SMBVideoThumbnailLoader {
             if fileSize > 0 {
                 resolvedSize = fileSize
             } else {
-                resolvedSize = (try? await sharesSource.client.fileSize(share: share, path: path)) ?? 0
+                do {
+                    resolvedSize = try await sharesSource.client.fileSize(share: share, path: path)
+                } catch {
+                    logw("Failed to resolve SMB video size for \(FichierKitLog.redacted(path)): \(error.localizedDescription)")
+                    resolvedSize = 0
+                }
             }
 
             guard resolvedSize > 0, !Task.isCancelled else {
@@ -308,7 +308,7 @@ public actor SMBVideoThumbnailLoader {
             fileSize: fileSize
         )
         let asset = AVURLAsset(url: streamURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
-        asset.resourceLoader.setDelegate(delegate, queue: Self.resourceLoaderQueue)
+        asset.resourceLoader.setDelegate(delegate, queue: FichierResourceLoaderQueue.shared)
 
         defer {
             delegate.cancelAll()

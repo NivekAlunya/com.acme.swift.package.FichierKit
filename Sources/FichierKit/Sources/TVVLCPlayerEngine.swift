@@ -410,8 +410,8 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         }
         #if canImport(VLCKit)
         guard mediaPlayer.media != nil else { return }
-        let count = mediaPlayer.numberOfChapters(forTitle: mediaPlayer.currentTitleIndex)
-        if count > 0 && index < Int(count) {
+        let chapterCount = mediaPlayer.numberOfChapters(forTitle: mediaPlayer.currentTitleIndex)
+        if chapterCount > 0 && index < Int(chapterCount) {
             mediaPlayer.currentChapterIndex = Int32(index)
         }
         #endif

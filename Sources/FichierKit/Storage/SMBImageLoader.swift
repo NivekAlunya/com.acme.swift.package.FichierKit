@@ -6,7 +6,7 @@
 
 import Foundation
 import ImageIO
-import os
+import Wappn
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -15,7 +15,6 @@ import UIKit
 /// to comply with tvOS storage constraints while maintaining smooth scrolling and 4K quality.
 public actor SMBImageLoader {
     public static let shared = SMBImageLoader()
-    private static let logger = Logger(subsystem: "com.acme.ios.fichierkit", category: "imageLoader")
 
     #if canImport(UIKit)
     private let thumbnailCache: NSCache<NSString, UIImage> = {
@@ -80,13 +79,13 @@ public actor SMBImageLoader {
                         maxBytes: self.maxThumbnailDownloadBytes
                     )
                 } catch {
-                    Self.logger.error("Failed to read thumbnail data for \(share)/\(path): \(error.localizedDescription)")
+                    loge("Failed to read thumbnail data for \(FichierKitLog.redacted(share))/\(FichierKitLog.redacted(path)): \(error.localizedDescription)")
                     return nil
                 }
 
                 guard !Task.isCancelled, !data.isEmpty else { return nil }
                 guard let decoded = Self.decodeDownsampledImage(from: data, maxPixelSize: maxPixelSize) else {
-                    Self.logger.warning("Failed to decode downsampled image from \(data.count) bytes for \(path)")
+                    logw("Failed to decode downsampled image from \(data.count) bytes for \(FichierKitLog.redacted(path))")
                     return nil
                 }
 
@@ -94,7 +93,7 @@ public actor SMBImageLoader {
                 return decoded
             }
         } catch {
-            Self.logger.error("Thumbnail permit acquisition failed for \(path): \(error.localizedDescription)")
+            loge("Thumbnail permit acquisition failed for \(FichierKitLog.redacted(path)): \(error.localizedDescription)")
             return nil
         }
     }
@@ -148,13 +147,13 @@ public actor SMBImageLoader {
         do {
             data = try Data(contentsOf: url, options: .mappedIfSafe)
         } catch {
-            Self.logger.error("Failed to read local image data from \(url.path): \(error.localizedDescription)")
+            loge("Failed to read local image data from \(FichierKitLog.redacted(url.path)): \(error.localizedDescription)")
             return nil
         }
 
         guard !Task.isCancelled, !data.isEmpty else { return nil }
         guard let decoded = Self.decodeDownsampledImage(from: data, maxPixelSize: maxPixelSize) else {
-            Self.logger.warning("Failed to decode local image at \(url.path)")
+            logw("Failed to decode local image at \(FichierKitLog.redacted(url.path))")
             return nil
         }
 
@@ -194,13 +193,13 @@ public actor SMBImageLoader {
                 maxBytes: maxFullImageDownloadBytes
             )
         } catch {
-            Self.logger.error("Failed to read full image data for \(share)/\(path): \(error.localizedDescription)")
+            loge("Failed to read full image data for \(FichierKitLog.redacted(share))/\(FichierKitLog.redacted(path)): \(error.localizedDescription)")
             return nil
         }
 
         guard !Task.isCancelled, !data.isEmpty else { return nil }
         guard let decoded = Self.decodeDownsampledImage(from: data, maxPixelSize: maxDimension) else {
-            Self.logger.warning("Failed to decode full image from \(data.count) bytes for \(path)")
+            logw("Failed to decode full image from \(data.count) bytes for \(FichierKitLog.redacted(path))")
             return nil
         }
 

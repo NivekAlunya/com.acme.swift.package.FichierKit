@@ -5,7 +5,7 @@
 
 import Foundation
 
-/// A high-performance, `@unchecked Sendable` generic in-memory cache wrapper around Apple's foundation `NSCache`.
+/// `@unchecked Sendable` generic in-memory cache wrapper around Apple's `NSCache` (no mutable Swift state; `NSCache` is thread-safe).
 ///
 /// ### Concurrency Architecture
 /// Apple's `NSCache` is thread-safe according to official documentation:

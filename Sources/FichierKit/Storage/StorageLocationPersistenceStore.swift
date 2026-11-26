@@ -67,7 +67,7 @@ public final class StorageLocationPersistenceStore {
         pass: String,
         hostname: String? = nil,
         existingConnections: [SavedSMBConnection]
-    ) async -> [SavedSMBConnection] {
+    ) async throws -> [SavedSMBConnection] {
         let existingHostname = existingConnections.first(where: { $0.id == "\(user)@\(host)" })?.hostname
         let finalHostname = hostname ?? existingHostname
 
@@ -77,7 +77,12 @@ public final class StorageLocationPersistenceStore {
             lastConnected: Date(),
             hostname: finalHostname
         )
-        await passwordStore.savePassword(pass, for: newEntry.id)
+        do {
+            try await passwordStore.savePassword(pass, for: newEntry.id)
+        } catch {
+            loge("Failed to save SMB password for \(FichierKitLog.redacted(newEntry.id)): \(error.localizedDescription)")
+            throw error
+        }
 
         var updated = existingConnections.filter { $0.id != newEntry.id }
         updated.insert(newEntry, at: 0)
