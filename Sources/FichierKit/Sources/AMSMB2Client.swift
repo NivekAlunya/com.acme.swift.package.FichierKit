@@ -513,7 +513,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 connectedShare = nil
                 lastError = error
                 if attempt < maxAttempts {
-                    try? await Task.sleep(for: .milliseconds(200))
+                    try await Task.sleep(for: .milliseconds(200))
                 }
             }
         }

@@ -368,14 +368,29 @@ public actor SMBVideoThumbnailLoader {
         // Race the extraction against a timeout: AVFoundation can hang indefinitely on files it
         // cannot parse over a custom loader. The first child to finish wins and the other is
         // cancelled. `onAbort` additionally cancels in-flight SMB reads so the socket is freed.
-        return await withTaskGroup(of: UIImage?.self) { group in
+        return await raceWithTimeout(timeoutSeconds: timeoutSeconds, onAbort: onAbort) {
+            await renderAVAssetFrame(asset: asset, maxDimension: maxDimension, itemID: itemID)
+        }
+    }
+
+    nonisolated static func raceWithTimeout<T: Sendable>(
+        timeoutSeconds: Double,
+        onAbort: (@Sendable () -> Void)? = nil,
+        operation: @escaping @Sendable () async -> T?
+    ) async -> T? {
+        guard !Task.isCancelled else { return nil }
+        return await withTaskGroup(of: T?.self) { group in
             group.addTask {
-                await renderAVAssetFrame(asset: asset, maxDimension: maxDimension, itemID: itemID)
+                await operation()
             }
 
             group.addTask {
-                try? await Task.sleep(for: .seconds(timeoutSeconds))
-                onAbort?()
+                do {
+                    try await Task.sleep(for: .seconds(timeoutSeconds))
+                    onAbort?()
+                } catch {
+                    // Cancelled because operation completed before timeout.
+                }
                 return nil
             }
 
