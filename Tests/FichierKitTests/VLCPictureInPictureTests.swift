@@ -32,6 +32,7 @@ struct VLCPictureInPictureTests {
     @Test("TVVLCPlayerEngine initializes PiP inactive and clears PiP callback on clearCallbacks")
     @MainActor
     func testEnginePiPLifecycleAndCallbackReset() {
+        // Instantiating TVVLCPlayerEngine without load/play only allocates VLCMediaPlayer and UIView (no decoders opened).
         let engine = TVVLCPlayerEngine()
         defer { engine.tearDown() }
 

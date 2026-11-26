@@ -35,6 +35,7 @@ public final class VLCPictureInPictureMediaController: NSObject, VLCPictureInPic
             completion?()
             return
         }
+        // VLCKit only exposes an Int32 millisecond offset API with completion; Int32.max (~24.8 days) exceeds media lengths.
         let clampedOffset = Int32(clamping: offset)
         let started = mediaPlayer.jump(withOffset: clampedOffset, completion: completion)
         if !started {
