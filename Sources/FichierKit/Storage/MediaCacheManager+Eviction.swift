@@ -51,9 +51,14 @@ extension MediaCacheManager {
         let docLimit: Int64 = isLowDiskSpace ? 200_000_000 : 1_000_000_000
         let thumbLimit: Int64 = isLowDiskSpace ? 100_000_000 : 300_000_000
         
+        // Each step is independent, so cancellation (e.g. background time expiring) can stop between them.
+        guard !Task.isCancelled else { return }
         await diskActor.cleanOrphanedPartFiles(in: [videosDirectory, documentsDirectory])
+        guard !Task.isCancelled else { return }
         await diskActor.evictFilesIfNeeded(in: videosDirectory, limitBytes: videoLimit, keeping: protecting)
+        guard !Task.isCancelled else { return }
         await diskActor.evictFilesIfNeeded(in: documentsDirectory, limitBytes: docLimit, keeping: protecting)
+        guard !Task.isCancelled else { return }
         await diskActor.evictFilesIfNeeded(in: thumbnailsDirectory, limitBytes: thumbLimit)
     }
 
