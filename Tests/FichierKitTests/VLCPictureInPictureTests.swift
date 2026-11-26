@@ -14,6 +14,7 @@ import VLCKit
 struct VLCPictureInPictureTests {
     #if canImport(VLCKit) && canImport(UIKit) && !os(watchOS)
     @Test("VLCPictureInPictureMediaController safely handles nil media player")
+    @MainActor
     func testMediaControllerWithoutPlayer() {
         let controller = VLCPictureInPictureMediaController(mediaPlayer: nil)
 
