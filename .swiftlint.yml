@@ -1,0 +1,56 @@
+# .swiftlint.yml
+
+included:
+  - Sources
+
+excluded:
+  - .build
+  - DerivedData
+
+opt_in_rules:
+  - empty_count
+  - force_unwrapping
+  - fatal_error_message
+  - redundant_nil_coalescing
+  - unneeded_parentheses_in_closure_argument
+  - vertical_whitespace_closing_braces
+  - yoda_condition
+
+disabled_rules:
+  - line_length
+  - trailing_whitespace
+  - identifier_name
+
+file_length:
+  warning: 800
+  error: 2000
+  ignore_comment_only_lines: true
+
+type_body_length:
+  warning: 500
+  error: 1500
+
+function_body_length:
+  warning: 100
+  error: 300
+
+large_tuple:
+  warning: 4
+  error: 5
+
+cyclomatic_complexity:
+  warning: 25
+  error: 35
+
+custom_rules:
+  no_legacy_dispatch_queue:
+    name: "Legacy Concurrency Primitive"
+    regex: "(DispatchQueue|DispatchSemaphore|DispatchGroup|NSLock|pthread_mutex)"
+    message: "Avoid legacy GCD/locking primitives. Use Swift 6 actors, async/await, or TaskGroup."
+    severity: warning
+
+  force_try_ban:
+    name: "Force Try"
+    regex: "(\\btry!\\b)"
+    message: "Avoid 'try!'. Use structured error handling (do-catch) or 'try?'."
+    severity: warning

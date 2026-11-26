@@ -6,6 +6,7 @@
 
 import Foundation
 import Network
+import Wappn
 
 /// Actor-isolated store persisting SMB connections in `UserDefaults`, passwords in Keychain, and testing reachability.
 public actor DefaultSMBServerStore: SMBServerStoreProtocol {
@@ -29,7 +30,12 @@ public actor DefaultSMBServerStore: SMBServerStoreProtocol {
 
     /// Stores or updates an SMB connection record and persists its password cleanly.
     public func saveServer(_ server: SavedSMBConnection, password: String) async throws {
-        await passwordStore.savePassword(password, for: server.id)
+        do {
+            try await passwordStore.savePassword(password, for: server.id)
+        } catch {
+            loge("Failed to save SMB password for \(FichierKitLog.redacted(server.id)): \(error.localizedDescription)")
+            throw error
+        }
 
         var existing = await loadServers()
         existing.removeAll { $0.id == server.id }
