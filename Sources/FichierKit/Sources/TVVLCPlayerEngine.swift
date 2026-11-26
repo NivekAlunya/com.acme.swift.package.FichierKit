@@ -114,7 +114,6 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
     public var onDurationUpdate: (@MainActor @Sendable (Double) -> Void)?
     public var onTracksChanged: (@MainActor @Sendable () -> Void)?
     public var onChaptersChanged: (@MainActor @Sendable () -> Void)?
-    public var onPiPStatusChanged: (@MainActor @Sendable (Bool) -> Void)?
 
     #if canImport(UIKit)
     /// Underlying UIKit drawable view attached to `VLCMediaPlayer.drawable`.
@@ -126,47 +125,36 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
     }()
 
     #if canImport(VLCKit) && !os(tvOS) && !os(watchOS)
+    /// Callback invoked on the main actor when Picture-in-Picture presentation starts or stops.
+    public var onPiPStatusChanged: (@MainActor @Sendable (Bool) -> Void)?
+
     private var pipDrawableAdapter: VLCPictureInPictureDrawableAdapter?
-    #endif
 
     /// Indicates whether Picture-in-Picture presentation is currently active.
     public var isPiPActive: Bool {
-        #if canImport(VLCKit) && !os(tvOS) && !os(watchOS)
         pipDrawableAdapter?.isPiPActive ?? false
-        #else
-        false
-        #endif
     }
 
     /// Indicates whether Picture-in-Picture is provisioned and ready to start.
     public var isPiPReady: Bool {
-        #if canImport(VLCKit) && !os(tvOS) && !os(watchOS)
         pipDrawableAdapter?.isPiPReady ?? false
-        #else
-        false
-        #endif
     }
 
     /// Starts Picture-in-Picture playback if ready.
     public func startPiP() {
-        #if canImport(VLCKit) && !os(tvOS) && !os(watchOS)
         pipDrawableAdapter?.startPictureInPicture()
-        #endif
     }
 
     /// Stops Picture-in-Picture playback if active.
     public func stopPiP() {
-        #if canImport(VLCKit) && !os(tvOS) && !os(watchOS)
         pipDrawableAdapter?.stopPictureInPicture()
-        #endif
     }
 
     /// Toggles Picture-in-Picture playback on or off.
     public func togglePiP() {
-        #if canImport(VLCKit) && !os(tvOS) && !os(watchOS)
         pipDrawableAdapter?.togglePictureInPicture()
-        #endif
     }
+    #endif
     #endif
 
     #if canImport(VLCKit)
@@ -212,14 +200,14 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
 
     /// Re-attaches the drawable render surface to LibVLC if not already attached.
     public func attachDrawable() {
-        #if canImport(VLCKit) && canImport(UIKit) && !os(tvOS) && !os(watchOS)
+        #if canImport(VLCKit) && canImport(UIKit)
+        #if !os(tvOS) && !os(watchOS)
         let target: AnyObject = pipDrawableAdapter ?? renderView
+        #else
+        let target: AnyObject = renderView
+        #endif
         if (mediaPlayer.drawable as AnyObject?) !== target {
             mediaPlayer.drawable = target
-        }
-        #elseif canImport(VLCKit) && canImport(UIKit)
-        if (mediaPlayer.drawable as AnyObject?) !== renderView {
-            mediaPlayer.drawable = renderView
         }
         #endif
     }
@@ -496,7 +484,9 @@ public final class TVVLCPlayerEngine: NSObject, PlayerEngine {
         onDurationUpdate = nil
         onTracksChanged = nil
         onChaptersChanged = nil
+        #if canImport(UIKit) && canImport(VLCKit) && !os(tvOS) && !os(watchOS)
         onPiPStatusChanged = nil
+        #endif
     }
 
     public func tearDown() {
