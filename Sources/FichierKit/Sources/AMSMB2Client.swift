@@ -7,6 +7,7 @@
 import Foundation
 import AMSMB2
 import Synchronization
+import Wappn
 
 /// Actor-isolated SMB2/3 network client powered by `AMSMB2`, serializing all `libsmb2` operations safely.
 public actor AMSMB2Client: SMBClientProtocol {
@@ -171,7 +172,7 @@ public actor AMSMB2Client: SMBClientProtocol {
 
                 if Self.isConnectionResetError(error) {
                     connectedShare = nil
-                    try? await manager?.disconnectShare(gracefully: false)
+                    await disconnectShareQuietly(manager, gracefully: false)
                     manager = nil
                 }
 
@@ -513,7 +514,7 @@ public actor AMSMB2Client: SMBClientProtocol {
                 connectedShare = nil
                 lastError = error
                 if attempt < maxAttempts {
-                    try? await Task.sleep(for: .milliseconds(200))
+                    try await Task.sleep(for: .milliseconds(200))
                 }
             }
         }
@@ -576,10 +577,19 @@ public actor AMSMB2Client: SMBClientProtocol {
     }
 
     private func performDisconnect() async {
-        try? await manager?.disconnectShare(gracefully: true)
+        await disconnectShareQuietly(manager, gracefully: true)
         manager = nil
         connectedShare = nil
         directorySnapshot = nil
+    }
+
+    private func disconnectShareQuietly(_ session: (any SMB2SessionProtocol)?, gracefully: Bool) async {
+        guard let session else { return }
+        do {
+            try await session.disconnectShare(gracefully: gracefully)
+        } catch {
+            logd("disconnectShare(gracefully: \(gracefully)) failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Private Helpers
@@ -597,7 +607,7 @@ public actor AMSMB2Client: SMBClientProtocol {
         let mgr = try getOrCreateManager()
         if forceReconnect || connectedShare != share {
             if forceReconnect {
-                try? await mgr.disconnectShare(gracefully: true)
+                await disconnectShareQuietly(mgr, gracefully: true)
                 connectedShare = nil
             }
             try await mgr.connectShare(name: share)

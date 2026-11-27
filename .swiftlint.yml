@@ -21,8 +21,9 @@ disabled_rules:
   - trailing_whitespace
   - identifier_name
 
+# `file_length` warning is set to 1000 so cohesive engines like `TVVLCPlayerEngine` (~895) remain unsplit without noisy warnings.
 file_length:
-  warning: 800
+  warning: 1000
   error: 2000
   ignore_comment_only_lines: true
 

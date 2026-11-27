@@ -278,10 +278,14 @@ public final class MediaDetailStore: Sendable {
                     try? await asset.load(.duration).seconds
                 }
                 group.addTask {
-                    try? await Task.sleep(for: .milliseconds(3000))
-                    // Cancel delegate and asset immediately on timeout to abort network I/O and unblock group join
-                    delegate.cancelAll()
-                    asset.cancelLoading()
+                    do {
+                        try await Task.sleep(for: .milliseconds(3000))
+                        // Cancel delegate and asset immediately on timeout to abort network I/O and unblock group join
+                        delegate.cancelAll()
+                        asset.cancelLoading()
+                    } catch {
+                        // Cancelled because duration load completed before timeout.
+                    }
                     return nil
                 }
                 let first = await group.next() ?? nil

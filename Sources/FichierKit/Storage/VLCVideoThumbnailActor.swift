@@ -17,6 +17,7 @@ public actor VLCVideoThumbnailActor {
     #if canImport(UIKit)
     private var pendingRequests: [UUID: CheckedContinuation<UIImage?, Never>] = [:]
     private var activeSessions: [UUID: VLCVideoThumbnailSession] = [:]
+    private var startTasks: [UUID: Task<Void, Never>] = [:]
     private var watchdogTasks: [UUID: Task<Void, Never>] = [:]
     private let limiter = SMBVideoThumbnailLimiter(maxConcurrent: 1)
 
@@ -86,7 +87,8 @@ public actor VLCVideoThumbnailActor {
 
                 self.pendingRequests[sessionID] = continuation
 
-                Task {
+                self.startTasks[sessionID] = Task {
+                    guard !Task.isCancelled else { return }
                     await session.start(
                         with: url,
                         maxDimension: maxDimension,
@@ -116,10 +118,13 @@ public actor VLCVideoThumbnailActor {
 
     private func cancelSession(id: UUID, image: UIImage?) async {
         watchdogTasks.removeValue(forKey: id)?.cancel()
+        let startTask = startTasks.removeValue(forKey: id)
+        startTask?.cancel()
         guard let session = activeSessions.removeValue(forKey: id) else {
             return
         }
 
+        await startTask?.value
         await session.cancel()
         if let continuation = pendingRequests.removeValue(forKey: id) {
             continuation.resume(returning: image)

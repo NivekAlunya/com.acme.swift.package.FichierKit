@@ -54,6 +54,8 @@ public nonisolated enum CrashReporting {
         #endif
     }
 
+    private static let neverMatchingRegex = (try? NSRegularExpression(pattern: "$^")) ?? NSRegularExpression()
+
     /// Regular expression detecting credentials embedded in URI schemes (e.g. `smb://user:password@host`, `smb://DOMAIN;user:password@host`, or `http://user:password@host`).
     private static let credentialURIRegex: NSRegularExpression = {
         let pattern = #"([a-zA-Z][a-zA-Z0-9+.-]*://[^:\s/]+?):([^@\s/]+)@"#
@@ -62,7 +64,7 @@ public nonisolated enum CrashReporting {
         } catch {
             assertionFailure("Invalid credential redaction regex: \(error)")
             // Fall back to a regex that matches nothing rather than the empty string
-            return (try? NSRegularExpression(pattern: "$^")) ?? NSRegularExpression()
+            return neverMatchingRegex
         }
     }()
 
