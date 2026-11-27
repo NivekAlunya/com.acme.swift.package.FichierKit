@@ -11,71 +11,39 @@ import Testing
 @Suite("ThumbnailPrefetchCoordinator")
 struct ThumbnailPrefetchCoordinatorTests {
 
-    @Test("Processes images before videos and skips folders")
-    func prioritizesImagesBeforeVideosAndSkipsFolders() async {
+    @Test("Gates visible loads while scrolling and resumes when idle")
+    @MainActor
+    func gatesBehindScrolling() async {
         let coordinator = ThumbnailPrefetchCoordinator()
-        let recorder = RecordedIDs()
+        var completed = false
 
-        let items = [
-            MediaSourceItem(id: "folder_1", name: "Folder", path: "/Folder", type: .folder),
-            MediaSourceItem(id: "vid_1", name: "clip.mp4", path: "/clip.mp4", type: .video),
-            MediaSourceItem(id: "img_1", name: "photo.jpg", path: "/photo.jpg", type: .image),
-            MediaSourceItem(id: "img_2", name: "raw.dng", path: "/raw.dng", type: .image)
-        ]
-
-        await coordinator.schedulePrefetch(folderKey: "test_folder", items: items) { item in
-            await recorder.append(item.id)
+        coordinator.setScrolling(true)
+        let waiter = Task { @MainActor in
+            await coordinator.waitUntilScrollIdle()
+            completed = true
         }
 
-        // Wait briefly for the utility task to drain all 3 non-folder items
-        for _ in 0..<50 {
-            if await recorder.count() == 3 { break }
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(completed == false)
 
-        let processed = await recorder.values()
-        #expect(processed == ["img_1", "img_2", "vid_1"])
+        coordinator.setScrolling(false)
+        await waiter.value
+        #expect(completed == true)
     }
 
-    @Test("Waits while visible loads are active and resumes once idle")
-    func gatesBehindVisibleLoads() async {
+    @Test("Cancelled waiter resumes immediately without waiting for scroll idle")
+    @MainActor
+    func cancelledWaiterResumesImmediately() async {
         let coordinator = ThumbnailPrefetchCoordinator()
-        let recorder = RecordedIDs()
+        coordinator.setScrolling(true)
 
-        await coordinator.beginVisibleLoad()
-        let items = [
-            MediaSourceItem(id: "img_1", name: "photo.jpg", path: "/photo.jpg", type: .image)
-        ]
-
-        await coordinator.schedulePrefetch(folderKey: "gated_folder", items: items) { item in
-            await recorder.append(item.id)
+        let waiter = Task { @MainActor in
+            await coordinator.waitUntilScrollIdle()
         }
 
-        try? await Task.sleep(for: .milliseconds(60))
-        #expect(await recorder.count() == 0)
-
-        await coordinator.endVisibleLoad()
-        for _ in 0..<50 {
-            if await recorder.count() == 1 { break }
-            try? await Task.sleep(for: .milliseconds(20))
-        }
-
-        #expect(await recorder.values() == ["img_1"])
-    }
-}
-
-private actor RecordedIDs {
-    private var ids: [String] = []
-
-    func append(_ id: String) {
-        ids.append(id)
-    }
-
-    func count() -> Int {
-        ids.count
-    }
-
-    func values() -> [String] {
-        ids
+        try? await Task.sleep(for: .milliseconds(20))
+        waiter.cancel()
+        await waiter.value
+        #expect(waiter.isCancelled == true)
     }
 }

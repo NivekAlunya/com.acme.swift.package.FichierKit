@@ -36,7 +36,7 @@ public actor VLCVideoThumbnailActor {
     public func generateThumbnail(
         from url: URL,
         maxDimension: CGFloat = 560,
-        snapshotPosition: Float = 0.02,
+        snapshotPosition: Float = 0.10,
         timeoutSeconds: Double = 6.0,
         snapshotTimeSeconds: Double? = nil,
         options: VLCPlaybackOptions? = nil
@@ -136,7 +136,7 @@ public actor VLCVideoThumbnailActor {
     public func generateThumbnail(
         from url: URL,
         maxDimension: CGFloat = 560,
-        snapshotPosition: Float = 0.02,
+        snapshotPosition: Float = 0.10,
         timeoutSeconds: Double = 6.0,
         snapshotTimeSeconds: Double? = nil,
         options: VLCPlaybackOptions? = nil

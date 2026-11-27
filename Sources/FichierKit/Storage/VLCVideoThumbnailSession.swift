@@ -52,9 +52,11 @@ public final class VLCVideoThumbnailSession: NSObject {
         }
 
         let thumb = VLCMediaThumbnailer(media: media, andDelegate: self)
+        // `VLCMediaThumbnailer` substitutes default 320px if width/height is 0 and stretches
+        // when both are non-zero with `cropsToFit = false`; `cropsToFit = true` preserves aspect ratio.
         thumb.thumbnailWidth = maxDimension
         thumb.thumbnailHeight = maxDimension
-        thumb.cropsToFit = false
+        thumb.cropsToFit = true
         thumb.preciseSeek = false
 
         if let snapshotTimeSeconds, snapshotTimeSeconds.isFinite, !snapshotTimeSeconds.isNaN {

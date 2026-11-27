@@ -18,25 +18,27 @@ actor SMBResourceLoadingTaskTracker {
     private let maxCancelledCapacity = 64
     private var isStopped = false
 
+    @discardableResult
     func runTask(
         for requestID: ObjectIdentifier,
         isCancelled: Bool,
         operation: @Sendable @escaping () async -> Void
-    ) {
+    ) -> Bool {
         if isStopped {
-            return
+            return false
         }
         if cancelledRequests.remove(requestID) != nil {
             cancelledOrder.removeAll { $0 == requestID }
-            return
+            return false
         }
-        guard !isCancelled else { return }
+        guard !isCancelled else { return false }
 
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             await operation()
             await self?.remove(for: requestID)
         }
         activeTasks[requestID] = task
+        return true
     }
 
     func remove(for requestID: ObjectIdentifier) {
