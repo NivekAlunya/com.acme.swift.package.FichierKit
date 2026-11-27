@@ -265,6 +265,7 @@ public final class PhotosMediaSource: MediaSource, Sendable {
     private func makeMediaSourceItem(for asset: PHAsset, fileName: String) -> MediaSourceItem {
         let isVideo = asset.mediaType == .video
         let estimatedSize = Int64(asset.pixelWidth * asset.pixelHeight * (isVideo ? 1 : 4))
+        let subtype: PhotoSubtype? = isVideo ? nil : Self.resolvePhotoSubtype(for: asset, fileName: fileName)
         return MediaSourceItem(
             id: "ph_\(asset.localIdentifier)",
             name: fileName,
@@ -272,8 +273,30 @@ public final class PhotosMediaSource: MediaSource, Sendable {
             type: isVideo ? .video : .image,
             size: estimatedSize,
             modifiedDate: asset.creationDate,
-            phAssetIdentifier: asset.localIdentifier
+            phAssetIdentifier: asset.localIdentifier,
+            photoSubtype: subtype
         )
+    }
+
+    private static func resolvePhotoSubtype(for asset: PHAsset, fileName: String) -> PhotoSubtype {
+        let subtypes = asset.mediaSubtypes
+        if subtypes.contains(.photoLive) {
+            return .livePhoto
+        }
+        if subtypes.contains(.photoPanorama) {
+            return .panorama
+        }
+        if subtypes.contains(.photoDepthEffect) {
+            return .portrait
+        }
+        if subtypes.contains(.photoScreenshot) {
+            return .screenshot
+        }
+        if subtypes.contains(.photoHDR) {
+            return .hdr
+        }
+        let ext = (fileName as NSString).pathExtension
+        return PhotoSubtype.from(extension: ext)
     }
 
     private static func resolveAssetFileName(_ asset: PHAsset) -> String {

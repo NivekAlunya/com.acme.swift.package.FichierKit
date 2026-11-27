@@ -35,8 +35,8 @@ public actor VLCVideoThumbnailActor {
     /// - Returns: Rendered `UIImage` frame, or `nil` on failure, timeout, or cancellation.
     public func generateThumbnail(
         from url: URL,
-        maxDimension: CGFloat = 520,
-        snapshotPosition: Float = 0.05,
+        maxDimension: CGFloat = 560,
+        snapshotPosition: Float = 0.02,
         timeoutSeconds: Double = 6.0,
         snapshotTimeSeconds: Double? = nil,
         options: VLCPlaybackOptions? = nil
@@ -135,8 +135,8 @@ public actor VLCVideoThumbnailActor {
 
     public func generateThumbnail(
         from url: URL,
-        maxDimension: CGFloat = 520,
-        snapshotPosition: Float = 0.05,
+        maxDimension: CGFloat = 560,
+        snapshotPosition: Float = 0.02,
         timeoutSeconds: Double = 6.0,
         snapshotTimeSeconds: Double? = nil,
         options: VLCPlaybackOptions? = nil

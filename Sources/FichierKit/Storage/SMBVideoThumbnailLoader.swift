@@ -443,17 +443,15 @@ public actor SMBVideoThumbnailLoader {
     }
 
     /// Picks the frame to sample and how far from it AVFoundation may snap (looser tolerance = faster,
-    /// as it can decode the nearest keyframe). Avoids the first frame, which is often black: 10 s into
-    /// long videos, 25% into medium ones, and frame zero for clips of 2 s or less.
+    /// as it can decode the nearest keyframe). Samples at 2% of duration to avoid black intro frames.
     private nonisolated static func resolveSampleTiming(durationSeconds: Double?) -> (CMTime, CMTime) {
         guard let durationSeconds, durationSeconds.isFinite, !durationSeconds.isNaN, durationSeconds > 0 else {
-            return (CMTime(seconds: 10.0, preferredTimescale: 600), CMTime(seconds: 2.5, preferredTimescale: 600))
+            return (CMTime(seconds: 1.0, preferredTimescale: 600), CMTime(seconds: 2.5, preferredTimescale: 600))
         }
 
-        if durationSeconds > 12.0 {
-            return (CMTime(seconds: 10.0, preferredTimescale: 600), CMTime(seconds: 2.5, preferredTimescale: 600))
-        } else if durationSeconds > 2.0 {
-            return (CMTime(seconds: durationSeconds * 0.25, preferredTimescale: 600), CMTime(seconds: 1.5, preferredTimescale: 600))
+        if durationSeconds > 2.0 {
+            let targetSeconds = max(0.5, durationSeconds * 0.02)
+            return (CMTime(seconds: targetSeconds, preferredTimescale: 600), CMTime(seconds: 2.0, preferredTimescale: 600))
         } else {
             return (.zero, .positiveInfinity)
         }
@@ -469,8 +467,8 @@ public actor SMBVideoThumbnailLoader {
         if let thumb = await VLCVideoThumbnailActor.shared.generateThumbnail(
             from: url,
             maxDimension: maxDimension,
-            snapshotPosition: 0.05,
-            timeoutSeconds: 10.0,
+            snapshotPosition: 0.02,
+            timeoutSeconds: 4.0,
             options: options
         ) {
             return thumb
@@ -482,7 +480,7 @@ public actor SMBVideoThumbnailLoader {
             from: url,
             maxDimension: maxDimension,
             snapshotPosition: 0.0,
-            timeoutSeconds: 8.0,
+            timeoutSeconds: 3.0,
             options: options
         )
     }

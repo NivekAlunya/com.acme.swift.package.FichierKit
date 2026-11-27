@@ -19,6 +19,7 @@ public struct MediaSourceItem: Identifiable, Hashable, Sendable {
     public let sourceID: String?
     public let smbShare: String?
     public let smbPath: String?
+    public let photoSubtype: PhotoSubtype?
 
     public init(
         id: String,
@@ -31,7 +32,8 @@ public struct MediaSourceItem: Identifiable, Hashable, Sendable {
         phAssetIdentifier: String? = nil,
         sourceID: String? = nil,
         smbShare: String? = nil,
-        smbPath: String? = nil
+        smbPath: String? = nil,
+        photoSubtype: PhotoSubtype? = nil
     ) {
         self.id = id
         self.name = name
@@ -44,5 +46,6 @@ public struct MediaSourceItem: Identifiable, Hashable, Sendable {
         self.sourceID = sourceID
         self.smbShare = smbShare
         self.smbPath = smbPath
+        self.photoSubtype = photoSubtype
     }
 }
