@@ -39,13 +39,13 @@ public enum PhotoSubtype: String, Sendable, Hashable, Equatable, CaseIterable {
         return .standard
     }
 
-    /// Short uppercase badge label for specialized subtypes, or `nil` for standard photos.
+    /// Short uppercase badge label for specialized subtypes, or `nil` for standard and animated photos
+    /// (allowing `MediaFormatStyle` to display `"GIF"`, `"WEBP"`, or `"AVIF"` from the file extension).
     public var badgeLabel: String? {
         switch self {
-        case .standard: return nil
+        case .standard, .animated: return nil
         case .raw: return "RAW"
         case .livePhoto: return "LIVE"
-        case .animated: return "GIF"
         case .hdr: return "HDR"
         case .panorama: return "PANO"
         case .portrait: return "PORTRAIT"
