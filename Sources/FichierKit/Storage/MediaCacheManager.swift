@@ -81,8 +81,8 @@ nonisolated public final class MediaCacheManager: Sendable {
     
     // MARK: - Thumbnail Master Dimension
     
-    /// The universal master pixel dimension for all on-disk cached thumbnails (420px).
-    public static let standardThumbnailDimension: CGFloat = 420
+    /// The universal master pixel dimension for all on-disk cached thumbnails (560px).
+    public static let standardThumbnailDimension: CGFloat = 560
     
     // MARK: - Key Hashing
     
@@ -478,7 +478,7 @@ nonisolated public final class MediaCacheManager: Sendable {
         maxDimension: CGFloat = standardThumbnailDimension,
         preferredTime: CMTime = defaultVideoThumbnailTime
     ) async -> UIImage? {
-        let initialPosition: Float = preferredTime <= .zero ? 0.0 : 0.05
+        let initialPosition: Float = preferredTime <= .zero ? 0.0 : 0.02
         if let thumb = await VLCVideoThumbnailActor.shared.generateThumbnail(
             from: localURL,
             maxDimension: maxDimension,

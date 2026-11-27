@@ -16,6 +16,7 @@ public enum MediaFormatStyle: Sendable {
         type: MediaItemType,
         isPDF: Bool = false,
         isGIF: Bool = false,
+        photoSubtype: PhotoSubtype? = nil,
         folderCount: Int = 0
     ) -> (label: String, color: Color, pictogramName: String) {
         if type == .folder {
@@ -26,7 +27,7 @@ public enum MediaFormatStyle: Sendable {
             return ("PDF", Color(red: 0.90, green: 0.25, blue: 0.25), "doc.text.fill")
         }
         if isGIF {
-            return ("GIF", Color.orange, "photo.fill")
+            return ("GIF", Color.orange, PhotoSubtype.animated.badgeSymbolName)
         }
 
         let rawExt = (name as NSString).pathExtension.trimmingCharacters(in: .punctuationCharacters)
@@ -38,9 +39,10 @@ public enum MediaFormatStyle: Sendable {
             return (label, color, "play.fill")
         }
 
-        let label = rawExt.isEmpty ? "PHOTO" : rawExt.uppercased()
-        let color = photoColor(forExtension: lowerExt)
-        return (label, color, "photo.fill")
+        let resolvedSubtype = photoSubtype ?? PhotoSubtype.from(extension: lowerExt)
+        let label = resolvedSubtype.badgeLabel ?? (rawExt.isEmpty ? "PHOTO" : rawExt.uppercased())
+        let color = photoColor(forExtension: lowerExt, subtype: resolvedSubtype)
+        return (label, color, resolvedSubtype.badgeSymbolName)
     }
 
     /// Resolves format badge label, accent color, and SF Symbol pictogram name for a `MediaSourceItem`.
@@ -53,6 +55,7 @@ public enum MediaFormatStyle: Sendable {
             type: item.type,
             isPDF: isPDF,
             isGIF: isGIF,
+            photoSubtype: item.photoSubtype,
             folderCount: item.size > 0 ? Int(item.size) : 0
         )
     }
@@ -103,8 +106,26 @@ public enum MediaFormatStyle: Sendable {
         }
     }
 
-    /// Returns the accent color for a photo or document extension.
-    public static func photoColor(forExtension ext: String) -> Color {
+    /// Returns the accent color for a photo or document extension, factoring in `PhotoSubtype`.
+    public static func photoColor(forExtension ext: String, subtype: PhotoSubtype = .standard) -> Color {
+        switch subtype {
+        case .livePhoto:
+            return Color.yellow.opacity(0.9)
+        case .hdr:
+            return Color.purple
+        case .panorama:
+            return Color.indigo
+        case .portrait:
+            return Color.pink
+        case .screenshot:
+            return Color.mint
+        case .raw:
+            return Color(red: 0.58, green: 0.28, blue: 0.88)
+        case .animated:
+            return Color.orange
+        case .standard:
+            break
+        }
         let normalized = ext.trimmingCharacters(in: .punctuationCharacters).lowercased()
         switch normalized {
         case "png":

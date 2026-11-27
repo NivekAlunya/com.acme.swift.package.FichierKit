@@ -64,7 +64,7 @@ extension MediaCacheManager {
     #if canImport(UIKit)
     /// Links a child's thumbnail to its parent folder as the folder icon.
     ///
-    /// Automatically downsamples full-resolution inputs to `standardThumbnailDimension` (420px)
+    /// Automatically downsamples full-resolution inputs to `standardThumbnailDimension` (560px)
     /// off the main thread before encoding to prevent disk bloat and memory spikes.
     ///
     /// - Parameters:

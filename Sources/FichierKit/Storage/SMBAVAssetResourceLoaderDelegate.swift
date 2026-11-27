@@ -111,7 +111,7 @@ public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAss
         // the full range is read. The loop re-checks cancellation after every await; finishing a
         // request that AVFoundation already cancelled or finished would raise an exception.
         Task {
-            await tracker.runTask(for: requestID, isCancelled: loadingRequest.isCancelled) {
+            let started = await tracker.runTask(for: requestID, isCancelled: loadingRequest.isCancelled) {
                 do {
                     var currentOffset = startOffset
                     var reachedPrematureEOF = false
@@ -171,6 +171,9 @@ public nonisolated final class SMBAVAssetResourceLoaderDelegate: NSObject, AVAss
                         loadingRequest.finishLoading(with: error)
                     }
                 }
+            }
+            if !started && !loadingRequest.isCancelled && !loadingRequest.isFinished {
+                loadingRequest.finishLoading(with: CancellationError())
             }
         }
 

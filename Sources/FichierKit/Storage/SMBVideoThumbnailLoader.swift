@@ -223,7 +223,8 @@ public actor SMBVideoThumbnailLoader {
         fileName: String,
         fileSize: Int64,
         maxDimension: CGFloat = standardMaxDimension,
-        itemID: String? = nil
+        itemID: String? = nil,
+        sampleAttempt: Int = 0
     ) async -> UIImage? {
         guard fileSize > 0, !Task.isCancelled else { return nil }
         let ext = fileExtension(fileName: fileName, fallbackPath: path)
@@ -231,19 +232,19 @@ public actor SMBVideoThumbnailLoader {
             if let nativeImage = await extractWithSMBAVFoundation(
                 client: client, share: share, path: path, fileName: fileName,
                 fileSize: fileSize, maxDimension: maxDimension, timeoutSeconds: 12.0,
-                itemID: itemID
+                itemID: itemID, sampleAttempt: sampleAttempt
             ) {
                 return nativeImage
             }
             guard !Task.isCancelled else { return nil }
             return await extractWithDirectSMBVLC(
                 server: server, password: password, share: share, path: path,
-                maxDimension: maxDimension
+                maxDimension: maxDimension, sampleAttempt: sampleAttempt
             )
         }
         return await extractWithDirectSMBVLC(
             server: server, password: password, share: share, path: path,
-            maxDimension: maxDimension
+            maxDimension: maxDimension, sampleAttempt: sampleAttempt
         )
     }
 
@@ -295,7 +296,8 @@ public actor SMBVideoThumbnailLoader {
         fileSize: Int64,
         maxDimension: CGFloat,
         timeoutSeconds: Double,
-        itemID: String? = nil
+        itemID: String? = nil,
+        sampleAttempt: Int = 0
     ) async -> UIImage? {
         guard !Task.isCancelled, fileSize > 0 else { return nil }
 
@@ -322,10 +324,15 @@ public actor SMBVideoThumbnailLoader {
                 maxDimension: maxDimension,
                 timeoutSeconds: timeoutSeconds,
                 itemID: itemID,
-                onAbort: { delegate.cancelAll() }
+                sampleAttempt: sampleAttempt,
+                onAbort: {
+                    delegate.cancelAll()
+                    asset.cancelLoading()
+                }
             )
         } onCancel: {
             delegate.cancelAll()
+            asset.cancelLoading()
         }
         // AVURLAsset only holds the resource-loader delegate weakly; keep delegate alive until extraction finishes.
         withExtendedLifetime(delegate) {}
@@ -337,7 +344,8 @@ public actor SMBVideoThumbnailLoader {
         password: String,
         share: String,
         path: String,
-        maxDimension: CGFloat
+        maxDimension: CGFloat,
+        sampleAttempt: Int = 0
     ) async -> UIImage? {
         guard !Task.isCancelled, let server else { return nil }
         guard let smbURL = VLCPlaybackOptions.makeSMBURL(
@@ -353,7 +361,12 @@ public actor SMBVideoThumbnailLoader {
             password: password
         )
 
-        return await extractWithVLC(from: smbURL, maxDimension: maxDimension, options: options)
+        return await extractWithVLC(
+            from: smbURL,
+            maxDimension: maxDimension,
+            sampleAttempt: sampleAttempt,
+            options: options
+        )
     }
 
     private nonisolated static func extractWithAVFoundation(
@@ -361,6 +374,7 @@ public actor SMBVideoThumbnailLoader {
         maxDimension: CGFloat,
         timeoutSeconds: Double,
         itemID: String? = nil,
+        sampleAttempt: Int = 0,
         onAbort: (@Sendable () -> Void)? = nil
     ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
@@ -369,7 +383,12 @@ public actor SMBVideoThumbnailLoader {
         // cannot parse over a custom loader. The first child to finish wins and the other is
         // cancelled. `onAbort` additionally cancels in-flight SMB reads so the socket is freed.
         return await raceWithTimeout(timeoutSeconds: timeoutSeconds, onAbort: onAbort) {
-            await renderAVAssetFrame(asset: asset, maxDimension: maxDimension, itemID: itemID)
+            await renderAVAssetFrame(
+                asset: asset,
+                maxDimension: maxDimension,
+                itemID: itemID,
+                sampleAttempt: sampleAttempt
+            )
         }
     }
 
@@ -403,7 +422,8 @@ public actor SMBVideoThumbnailLoader {
     private nonisolated static func renderAVAssetFrame(
         asset: AVURLAsset,
         maxDimension: CGFloat,
-        itemID: String? = nil
+        itemID: String? = nil,
+        sampleAttempt: Int = 0
     ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
 
@@ -417,59 +437,116 @@ public actor SMBVideoThumbnailLoader {
             }
         }
 
-        let (targetTime, tolerance) = resolveSampleTiming(durationSeconds: durationSeconds)
+        let (targetTime, toleranceBefore, toleranceAfter) = resolveSampleTiming(
+            durationSeconds: durationSeconds,
+            sampleAttempt: sampleAttempt
+        )
 
-        let generator = AVAssetImageGenerator(asset: asset)
+        let sendableGenerator = SendableAVAssetImageGenerator(asset: asset)
+        let generator = sendableGenerator.generator
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: maxDimension, height: maxDimension)
-        generator.requestedTimeToleranceBefore = tolerance
-        generator.requestedTimeToleranceAfter = tolerance
+        generator.requestedTimeToleranceBefore = toleranceBefore
+        generator.requestedTimeToleranceAfter = toleranceAfter
 
-        if let (cgImage, _) = try? await generator.image(at: targetTime) {
+        if let (cgImage, _) = await withTaskCancellationHandler(operation: {
+            try? await generator.image(at: targetTime)
+        }, onCancel: {
+            sendableGenerator.cancelAll()
+        }) {
             return UIImage(cgImage: cgImage)
         }
 
-        guard !Task.isCancelled, targetTime > .zero else { return nil }
+        guard !Task.isCancelled, targetTime > .zero else {
+            return nil
+        }
 
         // Fallback when the preferred time cannot be decoded (e.g. file shorter than reported):
         // accept any nearby keyframe at the very start.
         generator.requestedTimeToleranceBefore = .positiveInfinity
         generator.requestedTimeToleranceAfter = .positiveInfinity
-        if let (cgImage, _) = try? await generator.image(at: .zero) {
+        if let (cgImage, _) = await withTaskCancellationHandler(operation: {
+            try? await generator.image(at: .zero)
+        }, onCancel: {
+            sendableGenerator.cancelAll()
+        }) {
             return UIImage(cgImage: cgImage)
         }
 
         return nil
     }
 
-    /// Picks the frame to sample and how far from it AVFoundation may snap (looser tolerance = faster,
-    /// as it can decode the nearest keyframe). Avoids the first frame, which is often black: 10 s into
-    /// long videos, 25% into medium ones, and frame zero for clips of 2 s or less.
-    private nonisolated static func resolveSampleTiming(durationSeconds: Double?) -> (CMTime, CMTime) {
-        guard let durationSeconds, durationSeconds.isFinite, !durationSeconds.isNaN, durationSeconds > 0 else {
-            return (CMTime(seconds: 10.0, preferredTimescale: 600), CMTime(seconds: 2.5, preferredTimescale: 600))
+    /// Picks the frame to sample and asymmetric tolerances: tight `before` tolerance prevents
+    /// snapping back to black intro keyframes at `t = 0`, while generous `after` tolerance lets
+    /// AVFoundation snap forward to a nearby keyframe quickly.
+    ///
+    /// On manual retry (`sampleAttempt > 0`), cycles across 25% / 50% / 75% / 10% of the video
+    /// so tapping "Retry Preview" on a black scene samples a different part of the video.
+    private nonisolated static func resolveSampleTiming(
+        durationSeconds: Double?,
+        sampleAttempt: Int = 0
+    ) -> (CMTime, CMTime, CMTime) {
+        if sampleAttempt > 0 {
+            let fractions = [0.25, 0.50, 0.75, 0.10]
+            let fraction = fractions[(sampleAttempt - 1) % fractions.count]
+            if let durationSeconds, durationSeconds.isFinite, !durationSeconds.isNaN, durationSeconds > 1.0 {
+                let targetSeconds = max(1.0, min(durationSeconds - 0.5, durationSeconds * fraction))
+                let beforeSeconds = min(1.5, targetSeconds * 0.25)
+                return (
+                    CMTime(seconds: targetSeconds, preferredTimescale: 600),
+                    CMTime(seconds: beforeSeconds, preferredTimescale: 600),
+                    CMTime(seconds: 3.0, preferredTimescale: 600)
+                )
+            }
+            let fallbackTargets = [25.0, 45.0, 5.0, 10.0]
+            let targetSeconds = fallbackTargets[(sampleAttempt - 1) % fallbackTargets.count]
+            return (
+                CMTime(seconds: targetSeconds, preferredTimescale: 600),
+                CMTime(seconds: 1.5, preferredTimescale: 600),
+                CMTime(seconds: 3.0, preferredTimescale: 600)
+            )
         }
 
-        if durationSeconds > 12.0 {
-            return (CMTime(seconds: 10.0, preferredTimescale: 600), CMTime(seconds: 2.5, preferredTimescale: 600))
-        } else if durationSeconds > 2.0 {
-            return (CMTime(seconds: durationSeconds * 0.25, preferredTimescale: 600), CMTime(seconds: 1.5, preferredTimescale: 600))
+        guard let durationSeconds, durationSeconds.isFinite, !durationSeconds.isNaN, durationSeconds > 0 else {
+            return (
+                CMTime(seconds: 30.0, preferredTimescale: 600),
+                CMTime(seconds: 1.5, preferredTimescale: 600),
+                CMTime(seconds: 3.0, preferredTimescale: 600)
+            )
+        }
+
+        if durationSeconds >= 60.0 {
+            return (
+                CMTime(seconds: 30.0, preferredTimescale: 600),
+                CMTime(seconds: 1.5, preferredTimescale: 600),
+                CMTime(seconds: 3.0, preferredTimescale: 600)
+            )
+        } else if durationSeconds > 1.0 {
+            return (
+                CMTime(seconds: 1.0, preferredTimescale: 600),
+                CMTime(seconds: 0.5, preferredTimescale: 600),
+                CMTime(seconds: 2.0, preferredTimescale: 600)
+            )
         } else {
-            return (.zero, .positiveInfinity)
+            return (.zero, .positiveInfinity, .positiveInfinity)
         }
     }
 
     private nonisolated static func extractWithVLC(
         from url: URL,
         maxDimension: CGFloat,
+        sampleAttempt: Int = 0,
         options: VLCPlaybackOptions? = nil
     ) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
 
+        let vlcPositions: [Float] = [0.10, 0.25, 0.50, 0.75]
+        let snapshotPosition = sampleAttempt > 0 ? vlcPositions[sampleAttempt % vlcPositions.count] : 0.10
+
         if let thumb = await VLCVideoThumbnailActor.shared.generateThumbnail(
             from: url,
             maxDimension: maxDimension,
-            snapshotPosition: 0.05,
+            snapshotPosition: snapshotPosition,
             timeoutSeconds: 10.0,
             options: options
         ) {
