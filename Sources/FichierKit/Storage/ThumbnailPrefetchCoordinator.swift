@@ -12,17 +12,26 @@ import Foundation
 public final class ThumbnailPrefetchCoordinator {
     public static let shared = ThumbnailPrefetchCoordinator()
 
-    private var isScrolling: Bool = false
+    private static let defaultSourceID = UUID()
+
+    private var activeScrollSources: Set<UUID> = []
     private var scrollIdleWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    private var isScrolling: Bool { !activeScrollSources.isEmpty }
 
     public init() {}
 
-    /// Updates scroll activity state synchronously on `@MainActor`; when scrolling stops,
-    /// immediately resumes any waiting visible thumbnail loads.
-    public func setScrolling(_ scrolling: Bool) {
-        guard isScrolling != scrolling else { return }
-        isScrolling = scrolling
-        if !scrolling {
+    /// Updates scroll activity state for a specific view source synchronously on `@MainActor`.
+    /// When no active scrolling sources remain, immediately resumes any waiting visible thumbnail loads.
+    public func setScrolling(_ scrolling: Bool, sourceID: UUID? = nil) {
+        let id = sourceID ?? Self.defaultSourceID
+        let wasScrolling = isScrolling
+        if scrolling {
+            activeScrollSources.insert(id)
+        } else {
+            activeScrollSources.remove(id)
+        }
+        if wasScrolling && !isScrolling {
             let waiters = Array(scrollIdleWaiters.values)
             scrollIdleWaiters.removeAll()
             for waiter in waiters {

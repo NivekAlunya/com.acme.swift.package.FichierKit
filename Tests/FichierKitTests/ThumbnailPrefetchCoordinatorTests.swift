@@ -46,4 +46,30 @@ struct ThumbnailPrefetchCoordinatorTests {
         await waiter.value
         #expect(waiter.isCancelled == true)
     }
+
+    @Test("Clearing one scroll source does not resume while another source is scrolling")
+    @MainActor
+    func perSourceIsolation() async {
+        let coordinator = ThumbnailPrefetchCoordinator()
+        let sourceA = UUID()
+        let sourceB = UUID()
+        var completed = false
+
+        coordinator.setScrolling(true, sourceID: sourceA)
+        coordinator.setScrolling(true, sourceID: sourceB)
+
+        let waiter = Task { @MainActor in
+            await coordinator.waitUntilScrollIdle()
+            completed = true
+        }
+
+        try? await Task.sleep(for: .milliseconds(30))
+        coordinator.setScrolling(false, sourceID: sourceA)
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(completed == false)
+
+        coordinator.setScrolling(false, sourceID: sourceB)
+        await waiter.value
+        #expect(completed == true)
+    }
 }
